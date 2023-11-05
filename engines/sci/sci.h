@@ -143,6 +143,7 @@ class SciEngine : public Engine {
 public:
 	SciEngine(OSystem *syst, const ADGameDescription *desc, SciGameId gameId);
 	~SciEngine() override;
+	void CreateDIRListing();
 	void runTheoraIntro();
 	void runTheoraOutro();
 	// Engine APIs
@@ -255,6 +256,7 @@ public:
 
 	const Graphics::Surface *_theoraSurface;
 	Common::String oggBackground;
+
 public:
 	bool checkKernelBreakpoint(const Common::String &name);
 

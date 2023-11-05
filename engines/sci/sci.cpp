@@ -29,6 +29,12 @@
 #include "engines/advancedDetector.h"
 #include "engines/util.h"
 
+#ifdef WIN32
+#include <boost/filesystem.hpp>
+#else
+#include <dirent.h>
+#endif
+
 #include "sci/sci.h"
 #include "sci/debug.h"
 #include "sci/console.h"
@@ -97,6 +103,10 @@ MidiParser_SCI* midiMusic;
 std::list<std::string> extraDIRList;
 std::list<std::string>::iterator extraDIRListit;
 std::string extraPath = "";
+
+int cachedFiles;
+float cachedFilesPercent;
+int totalFilesToCache;
 
 SciEngine::SciEngine(OSystem *syst, const ADGameDescription *desc, SciGameId gameId) :
 	Engine(syst),
@@ -465,6 +475,8 @@ Common::Error SciEngine::run() {
 	}
 
 	extraPath = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
+	extraDIRList.clear();
+	CreateDIRListing();
 	videoCutscenesMap.clear();
 	playingVideoCutscenes = false;
 	videoCutsceneStart = "-undefined-";
@@ -472,6 +484,7 @@ Common::Error SciEngine::run() {
 	runTheoraIntro();
 	runGame();
 	runTheoraOutro();
+	extraDIRList.clear();
 	videoCutscenesMap.clear();
 	playingVideoCutscenes = false;
 	videoCutsceneStart = "-undefined-";
@@ -480,6 +493,36 @@ Common::Error SciEngine::run() {
 
 	return Common::kNoError;
 }
+
+#ifdef WIN32
+void SciEngine::CreateDIRListing() {
+	std::string path = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
+	for (boost::filesystem::directory_iterator it(path); it != boost::filesystem::directory_iterator(); ++it) {
+		std::string f = it->path().filename().string();
+		extraDIRList.push_back(f);
+	}
+}
+#else
+void SciEngine::CreateDIRListing() {
+	
+	std::string directory = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
+
+	DIR* dir;
+	class dirent* ent;
+	//class stat st;
+
+	dir = opendir(directory.c_str());
+	while ((ent = readdir(dir)) != NULL) {
+		const std::string file_name = ent->d_name;
+		const std::string full_file_name = directory + "/" + file_name;
+
+		std::string path = file_name;
+		extraDIRList.push_back(path);
+	}
+	closedir(dir);
+}
+#endif
+
 void SciEngine::runTheoraIntro() {
 
 	if (ConfMan.hasKey("extrapath")) {

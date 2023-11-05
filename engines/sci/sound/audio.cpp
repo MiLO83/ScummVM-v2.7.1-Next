@@ -212,7 +212,7 @@ void AudioPlayer::PlayEnhancedTextAudio(char *fileName, Common::String text) {
 	if (!prevMP3Text.contains(text)) {
 		Common::FSNode folder;
 		bool foundAudio = false;
-		Common::String fnStr = "text.";
+		Common::String fnStr = "";
 		fnStr += fileName;
 		if (ConfMan.hasKey("extrapath")) {
 			if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists()) {
@@ -276,9 +276,9 @@ void AudioPlayer::PlayEnhancedTextAudio(char *fileName, Common::String text) {
 		}
 		prevMP3Text = text;
 		if (foundAudio == false) {
-			debug(("\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\nDidn't Find : " + fnStr + ".mp3" + " = \n\n" + text + "\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n").c_str());
+			debug(("\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\nDidn't Find : " + fnStr + ".mp3/.wav" + " = \n\n" + text + "\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n").c_str());
 		} else {
-			debug(("\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\nFOUND & PLAYED : " + fnStr + ".mp3" + " = \n\n" + text + "\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n").c_str());
+			debug(("\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\nFOUND & PLAYED : " + fnStr + ".mp3/.wav" + " = \n\n" + text + "\n\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n").c_str());
 		}
 	}
 }

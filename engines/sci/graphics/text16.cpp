@@ -674,7 +674,6 @@ void GfxText16::Box(const char *text, uint16 languageSplitter, bool show, const 
 				debug(10, ("NO " + fn + ".cts").c_str());
 			}
 		}
-		bool replaceText = false;
 		if (!extraDIRList.empty()) {
 			if (fileIsInExtraDIRText((txtFileName).c_str())) {
 				Common::String fileName = Common::FSNode(ConfMan.get("extrapath")).getChild(txtFileName).getName();
