@@ -540,21 +540,24 @@ void SciEngine::runTheoraIntro() {
 			}
 
 			while (_theoraDecoder->isPlaying() && !_theoraDecoder->endOfVideo()) {
+				if (_theoraDecoder->decodeNextFrame() != 0) {
+					if (g_sci->_theoraDecoder->getTimeToNextFrame() > 0)
+					g_system->delayMillis(1000 / g_sci->_theoraDecoder->getTimeToNextFrame());
+					g_system->copyRectToScreen(_theoraDecoder->decodeNextFrame()->getPixels(), _theoraDecoder->getWidth() * 4, 0, 0, _theoraDecoder->getWidth(), _theoraDecoder->getHeight());
+					g_system->updateScreen();
+					Common::Event event;
+					while (g_system->getEventManager()->pollEvent(event)) {
 
-				g_system->copyRectToScreen(_theoraDecoder->decodeNextFrame()->getPixels(), _theoraDecoder->getWidth() * 4, 0, 0, _theoraDecoder->getWidth(), _theoraDecoder->getHeight());
-				g_system->updateScreen();
-				Common::Event event;
-				while (g_system->getEventManager()->pollEvent(event)) {
-
-					// Ignore everything but ESC when movies are playing
-					Common::EventType type = event.type;
-					if (type == Common::EVENT_KEYDOWN && event.kbd.keycode == Common::KEYCODE_ESCAPE) {
-						_theoraDecoder->stop();
-						break;
+						// Ignore everything but ESC when movies are playing
+						Common::EventType type = event.type;
+						if (type == Common::EVENT_KEYDOWN && event.kbd.keycode == Common::KEYCODE_ESCAPE) {
+							_theoraDecoder->stop();
+							break;
+						}
 					}
 				}
 			}
-
+			g_system->delayMillis(200);
 		} else {
 			debug(10, "NO 'intro.ogg'");
 		}

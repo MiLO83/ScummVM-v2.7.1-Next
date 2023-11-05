@@ -258,7 +258,7 @@ GfxScreen::~GfxScreen() {
 }
 
 void GfxScreen::convertToRGB(const Common::Rect &rect) {
-if (!playingVideoCutscenes) {	
+
 		assert(_format.bytesPerPixel != 1);
 
 		for (int y = rect.top; y < rect.bottom; ++y) {
@@ -340,7 +340,7 @@ if (!playingVideoCutscenes) {
 				}
 			}
 		}
-	}
+	
 }
 
 void GfxScreen::displayRectRGB(const Common::Rect &rect, int x, int y) {

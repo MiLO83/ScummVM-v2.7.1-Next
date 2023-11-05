@@ -33,6 +33,7 @@
 #include "sci/graphics/frameout.h"
 #endif
 #include "sci/graphics/screen.h"
+#include "sound/midiparser_sci.h"
 
 namespace Sci {
 
@@ -40,6 +41,11 @@ struct ScancodeRow {
 	int offset;
 	const char *keys;
 };
+
+extern bool playingVideoCutscenes;
+extern bool wasPlayingVideoCutscenes;
+extern MidiParser_SCI* midiMusic;
+extern byte _masterVolumeMIDI;
 
 static const ScancodeRow scancodeAltifyRows[] = {
 	{ 0x10, "QWERTYUIOP[]"  },
@@ -422,17 +428,73 @@ SciEvent EventManager::getScummVMEvent() {
 void EventManager::updateScreen() {
 	// Update the screen here, since it's called very often.
 	// Throttle the screen update rate to 60fps.
-	EngineState *s = g_sci->getEngineState();
-	if (g_system->getMillis() - s->_screenUpdateTime >= 1000 / 60) {
-		g_system->updateScreen();
-		s->_screenUpdateTime = g_system->getMillis();
-		// Throttle the checking of shouldQuit() to 60fps as well, since
-		// Engine::shouldQuit() invokes 2 virtual functions
-		// (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
-		// which is very expensive to invoke constantly without any
-		// throttling at all.
-		if (g_engine->shouldQuit())
-			s->abortScriptProcessing = kAbortQuitGame;
+	EngineState* s = g_sci->getEngineState();
+	if (playingVideoCutscenes)
+	{
+		if (g_system->getMillis() - s->_screenUpdateTime >= g_sci->_theoraDecoderCutscenes->getTimeToNextFrame() * 2) {
+			if (g_sci->_theoraDecoderCutscenes->getTimeToNextFrame() != 0) {
+				int16 frameDrop = (int)((g_system->getMillis() - s->_screenUpdateTime) / g_sci->_theoraDecoderCutscenes->getTimeToNextFrame());
+				if (frameDrop > 0) {
+					g_sci->_theoraDecoderCutscenes->seekToFrame(g_sci->_theoraDecoderCutscenes->getCurFrame() + frameDrop);
+				}
+			}
+		}
+		if (g_system->getMillis() - s->_screenUpdateTime >= g_sci->_theoraDecoderCutscenes->getTimeToNextFrame()) {
+
+			s->_screenUpdateTime = g_system->getMillis();
+			if (g_sci->_theoraDecoderCutscenes->getCurFrame() == -1) {
+				g_sci->_theoraDecoderCutscenes->decodeNextFrame();
+			}
+			else {
+				const Graphics::Surface* srf = g_sci->_theoraDecoderCutscenes->decodeNextFrame();
+				if (srf != nullptr) {
+					g_system->copyRectToScreen(srf->getPixels(), g_sci->_theoraDecoderCutscenes->getWidth() * 4, 0, 0, g_sci->_theoraDecoderCutscenes->getWidth(), g_sci->_theoraDecoderCutscenes->getHeight());
+
+			}
+				else {
+					playingVideoCutscenes = false;
+					g_system->getMixer()->muteSoundType(Audio::Mixer::kMusicSoundType, false);
+					g_system->getMixer()->muteSoundType(Audio::Mixer::kSFXSoundType, false);
+					g_system->getMixer()->muteSoundType(Audio::Mixer::kSpeechSoundType, false);
+				}
+		}
+			// Throttle the checking of shouldQuit() to 60fps as well, since
+			// Engine::shouldQuit() invokes 2 virtual functions
+			// (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
+			// which is very expensive to invoke constantly without any
+			// throttling at all.
+			if (g_engine->shouldQuit())
+				s->abortScriptProcessing = kAbortQuitGame;
+
+			g_system->updateScreen();
+
+	}
+
+
+
+}
+	else {
+
+		if (g_system->getMillis() - s->_screenUpdateTime >= 1000 / 60) {
+			s->_screenUpdateTime = g_system->getMillis();
+
+			g_system->copyRectToScreen(g_sci->_gfxScreen->_rgbScreen, g_sci->_gfxScreen->_displayWidth * 4, 0, 0, g_sci->_gfxScreen->_displayWidth, g_sci->_gfxScreen->_displayHeight);
+			g_system->updateScreen();
+
+			//g_sci->stereoRightEye = !g_sci->stereoRightEye;
+			// Throttle the checking of shouldQuit() to 60fps as well, since
+			// Engine::shouldQuit() invokes 2 virtual functions
+			// (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
+			// which is very expensive to invoke constantly without any
+			// throttling at all.
+			if (g_engine->shouldQuit())
+				s->abortScriptProcessing = kAbortQuitGame;	
+		}
+	}
+	if (!playingVideoCutscenes && wasPlayingVideoCutscenes) {
+		wasPlayingVideoCutscenes = false;
+		if (midiMusic != NULL)
+			midiMusic->setMasterVolume(_masterVolumeMIDI);
 	}
 }
 

@@ -162,14 +162,15 @@ public:
 	byte *_displayedScreen;
 	byte *_rgbScreen;
 
+	uint16 _displayWidth;
+	uint16 _displayHeight;
+
 private:
 	uint16 _width;
 	uint16 _height;
 	uint _pixels;
 	uint16 _scriptWidth;
 	uint16 _scriptHeight;
-	uint16 _displayWidth;
-	uint16 _displayHeight;
 	uint _displayPixels;
 
 	Graphics::PixelFormat _format;

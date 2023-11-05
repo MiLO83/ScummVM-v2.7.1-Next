@@ -38,6 +38,8 @@
 
 namespace Sci {
 
+byte _masterVolumeMIDI = 11;
+
 SciMusic::SciMusic(SciVersion soundVersion, bool useDigitalSFX)
 	: _mutex(g_system->getMixer()->mutex()), _soundVersion(soundVersion), _soundOn(true), _masterVolume(15), _globalReverb(0), _useDigitalSFX(useDigitalSFX), _needsResume(soundVersion > SCI_VERSION_0_LATE), _globalPause(0) {
 
