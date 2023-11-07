@@ -21,7 +21,11 @@
 
 #ifndef AGI_TEXT_H
 #define AGI_TEXT_H
-
+#include "backends/networking/curl/postrequest.h"
+#include "backends/networking/curl/connectionmanager.h"
+#include "backends/networking/curl/curljsonrequest.h"
+#include "backends/networking/curl/networkreadstream.h"
+#include "common/formats/json.h"
 namespace Agi {
 
 struct TextPos_Struct {
@@ -209,6 +213,12 @@ public:
 
 	char *stringPrintf(const char *originalText);
 	char *stringWordWrap(const char *originalText, int16 maxWidth, int16 *calculatedWidthPtr = nullptr, int16 *calculatedHeightPtr = nullptr);
+
+	void InWorldSessionResponse(Networking::JsonResponse response);
+	void InWorldResponse(Networking::JsonResponse response);
+	Networking::Request* _workingRequest;
+	Common::JSONValue* _jsonData;
+	
 };
 
 Common::String rightAlign(Common::String line, va_list args);

@@ -29,11 +29,7 @@
 #include "engines/advancedDetector.h"
 #include "engines/util.h"
 
-#ifdef WIN32
-#include <boost/filesystem.hpp>
-#else
 #include <dirent.h>
-#endif
 
 #include "sci/sci.h"
 #include "sci/debug.h"
@@ -494,15 +490,6 @@ Common::Error SciEngine::run() {
 	return Common::kNoError;
 }
 
-#ifdef WIN32
-void SciEngine::CreateDIRListing() {
-	std::string path = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
-	for (boost::filesystem::directory_iterator it(path); it != boost::filesystem::directory_iterator(); ++it) {
-		std::string f = it->path().filename().string();
-		extraDIRList.push_back(f);
-	}
-}
-#else
 void SciEngine::CreateDIRListing() {
 	
 	std::string directory = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
@@ -521,7 +508,6 @@ void SciEngine::CreateDIRListing() {
 	}
 	closedir(dir);
 }
-#endif
 
 void SciEngine::runTheoraIntro() {
 

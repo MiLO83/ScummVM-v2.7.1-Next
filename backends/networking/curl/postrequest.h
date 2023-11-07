@@ -40,10 +40,10 @@ class PostRequest: public Networking::Request {
 
 	Common::String _contentType;
 
+public:
 	void responseCallback(Networking::JsonResponse response);
 	void errorCallback(Networking::ErrorResponse error);
 
-public:
 	PostRequest(Common::String url, Networking::JSONValueCallback cb, Networking::ErrorCallback ecb);
 	virtual ~PostRequest();
 
