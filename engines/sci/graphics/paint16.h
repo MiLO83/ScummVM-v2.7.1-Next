@@ -43,10 +43,12 @@ public:
 	void debugSetEGAdrawingVisualize(bool state);
 
 	void drawPicture(GuiResourceId pictureId, bool mirroredFlag, bool addToFlag, GuiResourceId paletteId);
-	void drawCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
-	void drawCel(GuiResourceId viewId, int16 loopNo, int16 celNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
-	void drawCel(GfxView *view, int16 loopNo, int16 celNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
-	void drawHiresCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, reg_t upscaledHiresHandle, uint16 scaleX = 128, uint16 scaleY = 128);
+	void drawCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
+	void drawCel(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
+	void drawCel(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GfxView *view, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
+	void drawCelNoUpdate(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
+	void drawCelNoUpdate(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GfxView *view, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX = 128, uint16 scaleY = 128, uint16 scaleSignal = 0);
+	void drawHiresCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, reg_t upscaledHiresHandle, uint16 scaleX = 128, uint16 scaleY = 128);
 
 	void clearScreen(byte color = 255);
 	void invertRect(const Common::Rect &rect);
@@ -82,6 +84,7 @@ public:
 	reg_t kernelPortraitLoad(const Common::String &resourceName);
 	void kernelPortraitShow(const Common::String &resourceName, Common::Point position, uint16 resourceNum, uint16 noun, uint16 verb, uint16 cond, uint16 seq);
 	void kernelPortraitUnload(uint16 portraitId);
+	GfxPorts *_ports;
 
 private:
 	ResourceManager *_resMan;
@@ -89,7 +92,7 @@ private:
 	AudioPlayer *_audio;
 	GfxAnimate *_animate;
 	GfxCache *_cache;
-	GfxPorts *_ports;
+
 	GfxCoordAdjuster16 *_coordAdjuster;
 	GfxScreen *_screen;
 	GfxPalette *_palette;

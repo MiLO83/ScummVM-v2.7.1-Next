@@ -33,8 +33,11 @@
 #include "sci/graphics/frameout.h"
 #endif
 #include "sci/graphics/screen.h"
-#include "sound/midiparser_sci.h"
-
+#include "sci/graphics/paint16.h"
+#include "sci/graphics/animate.h"
+#include "sci/graphics/ports.h"
+#include <engines/sci/sound/midiparser_sci.h>
+#include "sci/sound/music.h"
 namespace Sci {
 
 struct ScancodeRow {
@@ -44,9 +47,8 @@ struct ScancodeRow {
 
 extern bool playingVideoCutscenes;
 extern bool wasPlayingVideoCutscenes;
-extern MidiParser_SCI* midiMusic;
+extern MidiParser_SCI *midiMusic;
 extern byte _masterVolumeMIDI;
-
 static const ScancodeRow scancodeAltifyRows[] = {
 	{ 0x10, "QWERTYUIOP[]"  },
 	{ 0x1e, "ASDFGHJKL;'\\" },
@@ -211,7 +213,19 @@ SciEvent EventManager::getScummVMEvent() {
 	} while (found && ev.type == Common::EVENT_MOUSEMOVE);
 
 	Common::Point mousePos = em->getMousePos();
-
+	g_sci->mouseLookPos = mousePos;
+	if (mousePos.x < 16 * g_sci->_enhancementMultiplier) {
+		mousePos.x = 0;
+	}
+	if (mousePos.x > g_sci->_gfxScreen->_displayWidth - (16 * g_sci->_enhancementMultiplier)) {
+		mousePos.x = g_sci->_gfxScreen->_displayWidth;
+	}
+	if (mousePos.y > g_sci->_gfxScreen->_displayHeight - (16 * g_sci->_enhancementMultiplier)) {
+		mousePos.y = g_sci->_gfxScreen->_displayHeight;
+	}
+	if (mousePos.y < 16 * g_sci->_enhancementMultiplier) {
+		mousePos.y = 0;
+	}
 #if ENABLE_SCI32
 	if (getSciVersion() >= SCI_VERSION_2) {
 		const GfxFrameout *gfxFrameout = g_sci->_gfxFrameout;
@@ -444,20 +458,18 @@ void EventManager::updateScreen() {
 			s->_screenUpdateTime = g_system->getMillis();
 			if (g_sci->_theoraDecoderCutscenes->getCurFrame() == -1) {
 				g_sci->_theoraDecoderCutscenes->decodeNextFrame();
-			}
-			else {
-				const Graphics::Surface* srf = g_sci->_theoraDecoderCutscenes->decodeNextFrame();
+			} else {
+				const Graphics::Surface *srf = g_sci->_theoraDecoderCutscenes->decodeNextFrame();
 				if (srf != nullptr) {
 					g_system->copyRectToScreen(srf->getPixels(), g_sci->_theoraDecoderCutscenes->getWidth() * 4, 0, 0, g_sci->_theoraDecoderCutscenes->getWidth(), g_sci->_theoraDecoderCutscenes->getHeight());
 
-			}
-				else {
+				} else {
 					playingVideoCutscenes = false;
 					g_system->getMixer()->muteSoundType(Audio::Mixer::kMusicSoundType, false);
 					g_system->getMixer()->muteSoundType(Audio::Mixer::kSFXSoundType, false);
 					g_system->getMixer()->muteSoundType(Audio::Mixer::kSpeechSoundType, false);
 				}
-		}
+			}
 			// Throttle the checking of shouldQuit() to 60fps as well, since
 			// Engine::shouldQuit() invokes 2 virtual functions
 			// (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
@@ -467,35 +479,73 @@ void EventManager::updateScreen() {
 				s->abortScriptProcessing = kAbortQuitGame;
 
 			g_system->updateScreen();
-
-	}
-
-
-
-}
-	else {
-
-		if (g_system->getMillis() - s->_screenUpdateTime >= 1000 / 60) {
-			s->_screenUpdateTime = g_system->getMillis();
-
-			g_system->copyRectToScreen(g_sci->_gfxScreen->_rgbScreen, g_sci->_gfxScreen->_displayWidth * 4, 0, 0, g_sci->_gfxScreen->_displayWidth, g_sci->_gfxScreen->_displayHeight);
-			g_system->updateScreen();
-
-			//g_sci->stereoRightEye = !g_sci->stereoRightEye;
-			// Throttle the checking of shouldQuit() to 60fps as well, since
-			// Engine::shouldQuit() invokes 2 virtual functions
-			// (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
-			// which is very expensive to invoke constantly without any
-			// throttling at all.
-			if (g_engine->shouldQuit())
-				s->abortScriptProcessing = kAbortQuitGame;	
+			
 		}
-	}
-	if (!playingVideoCutscenes && wasPlayingVideoCutscenes) {
-		wasPlayingVideoCutscenes = false;
-		if (midiMusic != NULL)
-			midiMusic->setMasterVolume(_masterVolumeMIDI);
-	}
+			
+		
+		
+	 } else {
+		 if (g_sci->stereoscopic) {
+
+			 if (g_system->getMillis() - s->_screenUpdateTime >= 1000 / 30) { // could be 60, but were rendering 2 screens.
+				 s->_screenUpdateTime = g_system->getMillis();
+
+				 for (int y = 0; y < g_sci->_gfxScreen->_displayHeight; y++) {
+					 byte *inL = g_sci->_gfxScreen->_rgbScreen_LEye + (y * g_sci->_gfxScreen->_displayWidth) * g_sci->_gfxScreen->_format.bytesPerPixel;
+					 byte *inR = g_sci->_gfxScreen->_rgbScreen_REye + (y * g_sci->_gfxScreen->_displayWidth) * g_sci->_gfxScreen->_format.bytesPerPixel;
+					 byte *out = g_sci->_gfxScreen->_rgbScreen + (y * g_sci->_gfxScreen->_displayWidth) * g_sci->_gfxScreen->_format.bytesPerPixel;
+					 for (int x = 0; x < g_sci->_gfxScreen->_displayWidth / 2; x++) {
+						 WRITE_UINT32(out, READ_UINT32(inL));
+						 inL += 8;
+						 out += 4;
+					 }
+					 for (int x = g_sci->_gfxScreen->_displayWidth / 2; x < g_sci->_gfxScreen->_displayWidth; x++) {
+						 WRITE_UINT32(out, READ_UINT32(inR));
+						 inR += 8;
+						 out += 4;
+					 }
+				 }
+				 g_system->copyRectToScreen(g_sci->_gfxScreen->_rgbScreen, g_sci->_gfxScreen->_displayWidth * 4, 0, 0, g_sci->_gfxScreen->_displayWidth, g_sci->_gfxScreen->_displayHeight);
+
+				 g_system->updateScreen();
+
+				 // Throttle the checking of shouldQuit() to 60fps as well, since
+				 // Engine::shouldQuit() invokes 2 virtual functions
+				 // (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
+				 // which is very expensive to invoke constantly without any
+				 // throttling at all.
+				 if (g_engine->shouldQuit())
+					 s->abortScriptProcessing = kAbortQuitGame;
+
+				 
+				 
+			 }
+		 
+		 
+		 } else {
+
+			 if (g_system->getMillis() - s->_screenUpdateTime >= 1000 / 60 && !g_sci->_gfxScreen->_picNotValid) {
+				 s->_screenUpdateTime = g_system->getMillis();
+
+				 g_system->updateScreen();
+
+				 // Throttle the checking of shouldQuit() to 60fps as well, since
+				 // Engine::shouldQuit() invokes 2 virtual functions
+				 // (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
+				 // which is very expensive to invoke constantly without any
+				 // throttling at all.
+				 if (g_engine->shouldQuit())
+					 s->abortScriptProcessing = kAbortQuitGame;
+
+				 
+			 }
+		 }
+	 }
+	 if (!playingVideoCutscenes && wasPlayingVideoCutscenes) {
+		 wasPlayingVideoCutscenes = false;
+		 if (midiMusic != NULL)
+			 midiMusic->setMasterVolume(_masterVolumeMIDI);
+	 }
 }
 
 SciEvent EventManager::getSciEvent(SciEventType mask) {

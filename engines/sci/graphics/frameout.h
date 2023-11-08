@@ -74,10 +74,11 @@ public:
 	 * Gets the y-resolution of the output buffer.
 	 */
 	inline int16 getScreenHeight() const { return _currentBuffer.h; }
+	GfxPalette32 *_palette;
+
 
 private:
 	GfxCursor32 *_cursor;
-	GfxPalette32 *_palette;
 	GfxTransitions32 *_transitions;
 	SegManager *_segMan;
 

@@ -37,11 +37,12 @@
 #include "sci/graphics/portrait.h"
 #include "sci/graphics/text16.h"
 #include "sci/graphics/transitions.h"
-
+#include <common/config-manager.h>
+#include <image/png.h>
 #include "sci/graphics/scifx.h"
 
 namespace Sci {
-
+Common::Rect _currentViewPort;
 GfxPaint16::GfxPaint16(ResourceManager *resMan, SegManager *segMan, GfxCache *cache, GfxPorts *ports, GfxCoordAdjuster16 *coordAdjuster, GfxScreen *screen, GfxPalette *palette, GfxTransitions *transitions, AudioPlayer *audio)
 	: _resMan(resMan), _segMan(segMan), _cache(cache), _ports(ports),
 	  _coordAdjuster(coordAdjuster), _screen(screen), _palette(palette),
@@ -54,7 +55,13 @@ GfxPaint16::GfxPaint16(ResourceManager *resMan, SegManager *segMan, GfxCache *ca
 
 GfxPaint16::~GfxPaint16() {
 }
-
+extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> > fontsMap;
+extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator fontsMapit;
+extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> > viewsMap;
+extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator viewsMapit;
+extern std::list<std::string> extraDIRList;
+extern std::list<std::string>::iterator extraDIRListit;
+extern bool preLoadedPNGs;
 void GfxPaint16::init(GfxAnimate *animate, GfxText16 *text16) {
 	_animate = animate;
 	_text16 = text16;
@@ -62,6 +69,75 @@ void GfxPaint16::init(GfxAnimate *animate, GfxText16 *text16) {
 
 void GfxPaint16::debugSetEGAdrawingVisualize(bool state) {
 	_EGAdrawingVisualize = state;
+}
+
+bool havEnding(std::string const &fullString, std::string const &ending) {
+	if (fullString.length() >= ending.length()) {
+		return (0 == fullString.compare(fullString.length() - ending.length(), ending.length(), ending));
+	} else {
+		return false;
+	}
+}
+
+Graphics::Surface *loadCelPNGPaint(Common::SeekableReadStream *s) {
+	Image::PNGDecoder d;
+
+	if (!s)
+		return nullptr;
+	d.loadStream(*s);
+	delete s;
+
+	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+	return srf;
+}
+Graphics::Surface *loadCelPNGCLUTPaint(Common::SeekableReadStream *s) {
+	Image::PNGDecoder d;
+
+	if (!s)
+		return nullptr;
+	d.loadStream(*s);
+	delete s;
+	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8());
+	return srf;
+}
+
+Graphics::Surface *loadCelPNGCLUTOverridePaint(Common::SeekableReadStream *s) {
+	Image::PNGDecoder d;
+
+	if (!s)
+		return nullptr;
+	d.loadStream(*s);
+	delete s;
+	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8(), d.getPalette());
+
+	for (int16 i = 0; i < 256; i++) {
+		g_sci->_gfxPalette16->_paletteOverride.colors[i].r = d.getPalette()[i * 3];
+		g_sci->_gfxPalette16->_paletteOverride.colors[i].g = d.getPalette()[(i * 3) + 1];
+		g_sci->_gfxPalette16->_paletteOverride.colors[i].b = d.getPalette()[(i * 3) + 2];
+	}
+	g_sci->_gfxPalette16->_sysPalette = g_sci->_gfxPalette16->_paletteOverride;
+	//memcpy((void *)g_sci->_gfxPalette16->_paletteOverride, d.getPalette(), sizeof(d.getPalette()));
+	//_tehScreen->setPalette(d.getPalette(), 0, 256, true);
+	return srf;
+}
+
+bool fileIsInExtraDIRPaint(std::string fileName) {
+
+	bool found = false;
+	std::list<std::string>::iterator it;
+	for (it = extraDIRList.begin(); it != extraDIRList.end(); ++it) {
+		std::string s = it->c_str();
+		if (s.compare(fileName) == 0) {
+			found = true;
+		}
+	}
+	if (found) {
+		//debug("FOUND : %s", fileName.c_str());
+		return true;
+	} else {
+
+		return false;
+	}
 }
 
 void GfxPaint16::drawPicture(GuiResourceId pictureId, bool mirroredFlag, bool addToFlag, GuiResourceId paletteId) {
@@ -87,7 +163,7 @@ void GfxPaint16::drawPicture(GuiResourceId pictureId, bool mirroredFlag, bool ad
 }
 
 // This one is the only one that updates screen!
-void GfxPaint16::drawCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
+void GfxPaint16::drawCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
 	GfxView *view = _cache->getView(viewId);
 	Common::Rect celRect;
 
@@ -96,8 +172,152 @@ void GfxPaint16::drawCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo,
 		celRect.top = topPos;
 		celRect.right = celRect.left + view->getWidth(loopNo, celNo);
 		celRect.bottom = celRect.top + view->getHeight(loopNo, celNo);
+		AnimateEntry listEntry;
+		Common::FSNode folder;
+		if (ConfMan.hasKey("extrapath")) {
+			char viewstrbuffer[32];
+			int retVal, buf_size = 32;
+			retVal = snprintf(viewstrbuffer, buf_size, "view.%u.%u.%u", viewId, loopNo, celNo);
+			Common::String fn = viewstrbuffer;
+			bool preloaded = false;
+			//if (listEntry.viewpng == NULL)
+			{
+				if (viewsMap.size() > 0)
+					for (viewsMapit = viewsMap.begin();
+					     viewsMapit != viewsMap.end(); ++viewsMapit) {
 
-		drawCel(view, loopNo, celNo, celRect, priority, paletteNo, scaleX, scaleY, scaleSignal);
+						if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
+
+							//debug(viewsMapit->first.c_str());
+							std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+							listEntry.viewpng = tmp.first;
+							//debug("RELOADED FROM RAM");
+							listEntry.viewenh = tmp.second;
+							if (listEntry.viewenh) {
+								preloaded = true;
+								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+								listEntry.viewEnhanced = true;
+								listEntry.enhancedIs256 = false;
+							}
+						}
+						if (strcmp(viewsMapit->first.c_str(), (fn + "_256.png").c_str()) == 0) {
+
+							//debug(viewsMapit->first.c_str());
+							std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+							listEntry.viewpng = tmp.first;
+							//debug("RELOADED FROM RAM");
+							listEntry.viewenh = tmp.second;
+							if (listEntry.viewenh) {
+								preloaded = true;
+								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+								listEntry.viewEnhanced = true;
+								listEntry.enhancedIs256 = false;
+							}
+						}
+						if (strcmp(viewsMapit->first.c_str(), (fn + "_256RP.png").c_str()) == 0) {
+
+							//debug(viewsMapit->first.c_str());
+							std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+							listEntry.viewpng = tmp.first;
+							//debug("RELOADED FROM RAM");
+							listEntry.viewenh = tmp.second;
+							if (listEntry.viewenh) {
+								preloaded = true;
+								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+								listEntry.viewEnhanced = true;
+								listEntry.enhancedIs256 = false;
+							}
+						}
+					}
+				if (!preloaded) {
+					if (ConfMan.hasKey("extrapath")) {
+						if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + ".png").exists()) {
+							if (!listEntry.viewEnhanced) {
+								Common::String fileName = folder.getChild(fn + ".png").getName();
+								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+								if (!file) {
+									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+								} else {
+									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+									Graphics::Surface *viewpngtmp = loadCelPNGPaint(file);
+									listEntry.viewpng = viewpngtmp;
+									if (listEntry.viewpng) {
+										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+										listEntry.viewenh = viewenhtmp;
+										if (listEntry.viewenh) {
+											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+											listEntry.viewEnhanced = true;
+											listEntry.enhancedIs256 = false;
+											std::pair<Graphics::Surface *, const byte *> tmp;
+											tmp.first = viewpngtmp;
+											tmp.second = viewenhtmp;
+											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >(fn.c_str(), tmp));
+											//debug(fn.c_str());
+											//debug("LOADED FROM DISC");
+										}
+									}
+								}
+							}
+						} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256.png").exists()) {
+							if (!listEntry.viewEnhanced) {
+								Common::String fileName = folder.getChild(fn + "_256.png").getName();
+								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+								if (!file) {
+									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+								} else {
+									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+									Graphics::Surface *viewpngtmp = loadCelPNGCLUTPaint(file);
+									listEntry.viewpng = viewpngtmp;
+									if (listEntry.viewpng) {
+										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+										listEntry.viewenh = viewenhtmp;
+										if (listEntry.viewenh) {
+											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+											listEntry.viewEnhanced = true;
+											listEntry.enhancedIs256 = true;
+											std::pair<Graphics::Surface *, const byte *> tmp;
+											tmp.first = viewpngtmp;
+											tmp.second = viewenhtmp;
+											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256.png").c_str(), tmp));
+											//debug(fn.c_str());
+											//debug("LOADED FROM DISC");
+										}
+									}
+								}
+							}
+						} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256RP.png").exists()) {
+							if (!listEntry.viewEnhanced) {
+								Common::String fileName = folder.getChild(fn + "_256RP.png").getName();
+								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+								if (!file) {
+									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+								} else {
+									//debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+									Graphics::Surface *viewpngtmp = loadCelPNGCLUTOverridePaint(file);
+									listEntry.viewpng = viewpngtmp;
+									if (listEntry.viewpng) {
+										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+										listEntry.viewenh = viewenhtmp;
+										if (listEntry.viewenh) {
+											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+											listEntry.viewEnhanced = true;
+											listEntry.enhancedIs256 = true;
+											std::pair<Graphics::Surface *, const byte *> tmp;
+											tmp.first = viewpngtmp;
+											tmp.second = viewenhtmp;
+											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256RP.png").c_str(), tmp));
+											//debug(fn.c_str());
+											//debug("LOADED FROM DISC");
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		drawCel(listEntry.viewpng, listEntry.viewenh, listEntry.pixelsLength, listEntry.viewEnhanced, listEntry.enhancedIs256, view, loopNo, celNo, tweenNo, celRect, priority, paletteNo, scaleX, scaleY, scaleSignal);
 
 		if (getSciVersion() >= SCI_VERSION_1_1) {
 			if (!_screen->_picNotValidSci11) {
@@ -110,29 +330,67 @@ void GfxPaint16::drawCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo,
 	}
 }
 
-// This version of drawCel is not supposed to call BitsShow()!
-void GfxPaint16::drawCel(GuiResourceId viewId, int16 loopNo, int16 celNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
-	drawCel(_cache->getView(viewId), loopNo, celNo, celRect, priority, paletteNo, scaleX, scaleY, scaleSignal);
+/// This version of drawCel is not supposed to call BitsShow()!
+void GfxPaint16::drawCel(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
+	drawCel(viewpng, viewenh, pixelsLength, viewEnhanced, enhancedIs256, _cache->getView(viewId), loopNo, celNo, tweenNo, celRect, priority, paletteNo, scaleX, scaleY, scaleSignal);
 }
-
+void GfxPaint16::drawCelNoUpdate(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
+	drawCelNoUpdate(viewpng, viewenh, pixelsLength, viewEnhanced, enhancedIs256, _cache->getView(viewId), loopNo, celNo, tweenNo, celRect, priority, paletteNo, scaleX, scaleY, scaleSignal);
+}
 // This version of drawCel is not supposed to call BitsShow()!
-void GfxPaint16::drawCel(GfxView *view, int16 loopNo, int16 celNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
+void GfxPaint16::drawCel(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GfxView *view, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
 	Common::Rect clipRect = celRect;
-	clipRect.clip(_ports->_curPort->rect);
+	Common::Rect curPortRectX;
+	if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400) {
+		curPortRectX.left = _ports->_curPort->rect.left * 2;
+		curPortRectX.right = _ports->_curPort->rect.right * 2;
+		curPortRectX.top = _ports->_curPort->rect.top * 2;
+		curPortRectX.bottom = _ports->_curPort->rect.bottom * 2;
+	} else {
+		curPortRectX = _ports->_curPort->rect;
+	}
+	clipRect.clip(curPortRectX);
+
+	_currentViewPort = _ports->_curPort->rect;
 	if (clipRect.isEmpty()) // nothing to draw
 		return;
 
 	Common::Rect clipRectTranslated = clipRect;
 	_ports->offsetRect(clipRectTranslated);
 	if (scaleX == 128 && scaleY == 128)
-		view->draw(celRect, clipRect, clipRectTranslated, loopNo, celNo, priority, paletteNo, false, scaleSignal);
+		view->draw(viewpng, viewenh, pixelsLength, viewEnhanced, enhancedIs256, celRect, clipRect, clipRectTranslated, loopNo, celNo, tweenNo, priority, paletteNo, false, scaleSignal);
 	else
-		view->drawScaled(celRect, clipRect, clipRectTranslated, loopNo, celNo, priority, scaleX, scaleY, scaleSignal);
+		view->drawScaled(viewpng, viewenh, pixelsLength, viewEnhanced, enhancedIs256, celRect, clipRect, clipRectTranslated, loopNo, celNo, tweenNo, priority, scaleX, scaleY, scaleSignal);
 }
 
+// This version of drawCel is not supposed to call BitsShow()!
+void GfxPaint16::drawCelNoUpdate(Graphics::Surface *viewpng, const byte *viewenh, int pixelsLength, bool viewEnhanced, bool enhancedIs256, GfxView *view, int16 loopNo, int16 celNo, int16 tweenNo, const Common::Rect &celRect, byte priority, uint16 paletteNo, uint16 scaleX, uint16 scaleY, uint16 scaleSignal) {
+	Common::Rect clipRect = celRect;
+	Common::Rect curPortRectX;
+	if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400) {
+		curPortRectX.left = _ports->_curPort->rect.left * 2;
+		curPortRectX.right = _ports->_curPort->rect.right * 2;
+		curPortRectX.top = _ports->_curPort->rect.top * 2;
+		curPortRectX.bottom = _ports->_curPort->rect.bottom * 2;
+	} else {
+		curPortRectX = _ports->_curPort->rect;
+	}
+	clipRect.clip(curPortRectX);
+
+	_currentViewPort = _ports->_curPort->rect;
+	if (clipRect.isEmpty()) // nothing to draw
+		return;
+
+	Common::Rect clipRectTranslated = clipRect;
+	_ports->offsetRect(clipRectTranslated);
+	if (scaleX == 128 && scaleY == 128)
+		view->drawNoUpdate(viewpng, viewenh, pixelsLength, viewEnhanced, enhancedIs256, celRect, clipRect, clipRectTranslated, loopNo, celNo, tweenNo, priority, paletteNo, false, scaleSignal);
+	else
+		view->drawScaledNoUpdate(viewpng, viewenh, pixelsLength, viewEnhanced, enhancedIs256, celRect, clipRect, clipRectTranslated, loopNo, celNo, tweenNo, priority, scaleX, scaleY, scaleSignal);
+}
 // This is used as replacement for drawCelAndShow() when hires-cels are drawn to
 // screen. Hires-cels are available only SCI 1.1+.
-void GfxPaint16::drawHiresCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, reg_t upscaledHiresHandle, uint16 scaleX, uint16 scaleY) {
+void GfxPaint16::drawHiresCelAndShow(GuiResourceId viewId, int16 loopNo, int16 celNo, int16 tweenNo, uint16 leftPos, uint16 topPos, byte priority, uint16 paletteNo, reg_t upscaledHiresHandle, uint16 scaleX, uint16 scaleY) {
 	GfxView *view = _cache->getView(viewId);
 	Common::Rect celRect, curPortRect, clipRect, clipRectTranslated;
 	Common::Point curPortPos;
@@ -144,7 +402,7 @@ void GfxPaint16::drawHiresCelAndShow(GuiResourceId viewId, int16 loopNo, int16 c
 			// need to get coordinates from upscaledHiresHandle. I'm not sure if
 			// this is what we are supposed to do or if there is some other bug
 			// that actually makes coordinates to be 0 in the first place.
-			byte *memoryPtr = nullptr;
+			byte *memoryPtr = NULL;
 			memoryPtr = _segMan->getHunkPointer(upscaledHiresHandle);
 			if (memoryPtr) {
 				Common::Rect upscaledHiresRect;
@@ -177,8 +435,151 @@ void GfxPaint16::drawHiresCelAndShow(GuiResourceId viewId, int16 loopNo, int16 c
 			clipRectTranslated.top += curPortPos.y; clipRectTranslated.bottom += curPortPos.y;
 			clipRectTranslated.left += curPortPos.x; clipRectTranslated.right += curPortPos.x;
 		}
+		AnimateEntry listEntry;
+		Common::FSNode folder;
+		if (ConfMan.hasKey("extrapath")) {
+			char viewstrbuffer[32];
+			int retVal, buf_size = 32;
+			retVal = snprintf(viewstrbuffer, buf_size, "view.%u.%u.%u", viewId, loopNo, celNo);
+			Common::String fn = viewstrbuffer;
+			bool preloaded = false;
+			if (listEntry.viewpng == NULL) {
+				if (viewsMap.size() > 0)
+					for (viewsMapit = viewsMap.begin();
+					     viewsMapit != viewsMap.end(); ++viewsMapit) {
 
-		view->draw(celRect, clipRect, clipRectTranslated, loopNo, celNo, priority, paletteNo, true);
+						if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
+
+							//debug(viewsMapit->first.c_str());
+							std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+							listEntry.viewpng = tmp.first;
+							//debug("RELOADED FROM RAM");
+							listEntry.viewenh = tmp.second;
+							if (listEntry.viewenh) {
+								preloaded = true;
+								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+								listEntry.viewEnhanced = true;
+								listEntry.enhancedIs256 = false;
+							}
+						}
+					if (strcmp(viewsMapit->first.c_str(), (fn + "_256.png").c_str()) == 0) {
+
+							//debug(viewsMapit->first.c_str());
+							std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+							listEntry.viewpng = tmp.first;
+							//debug("RELOADED FROM RAM");
+							listEntry.viewenh = tmp.second;
+							if (listEntry.viewenh) {
+								preloaded = true;
+								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+								listEntry.viewEnhanced = true;
+								listEntry.enhancedIs256 = true;
+							}
+						}
+					if (strcmp(viewsMapit->first.c_str(), (fn + "_256RP.png").c_str()) == 0) {
+
+							//debug(viewsMapit->first.c_str());
+							std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+							listEntry.viewpng = tmp.first;
+							//debug("RELOADED FROM RAM");
+							listEntry.viewenh = tmp.second;
+							if (listEntry.viewenh) {
+								preloaded = true;
+								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+								listEntry.viewEnhanced = true;
+								listEntry.enhancedIs256 = true;
+							}
+						}
+					}
+				if (!preloaded) {
+					if (ConfMan.hasKey("extrapath")) {
+						if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + ".png").exists()) {
+							if (!listEntry.viewEnhanced) {
+								Common::String fileName = folder.getChild(fn + ".png").getName();
+								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+								if (!file) {
+									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+								} else {
+									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+									Graphics::Surface *viewpngtmp = loadCelPNGPaint(file);
+									listEntry.viewpng = viewpngtmp;
+									if (listEntry.viewpng) {
+										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+										listEntry.viewenh = viewenhtmp;
+										if (listEntry.viewenh) {
+											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+											listEntry.viewEnhanced = true;
+											listEntry.enhancedIs256 = false;
+											std::pair<Graphics::Surface *, const byte *> tmp;
+											tmp.first = viewpngtmp;
+											tmp.second = viewenhtmp;
+											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >(fn.c_str(), tmp));
+											//debug(fn.c_str());
+											//debug("LOADED FROM DISC");
+										}
+									}
+								}
+							}
+						} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256.png").exists()) {
+							if (!listEntry.viewEnhanced) {
+								Common::String fileName = folder.getChild(fn + "_256.png").getName();
+								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+								if (!file) {
+									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+								} else {
+									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+									Graphics::Surface *viewpngtmp = loadCelPNGCLUTPaint(file);
+									listEntry.viewpng = viewpngtmp;
+									if (listEntry.viewpng) {
+										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+										listEntry.viewenh = viewenhtmp;
+										if (listEntry.viewenh) {
+											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+											listEntry.viewEnhanced = true;
+											listEntry.enhancedIs256 = true;
+											std::pair<Graphics::Surface *, const byte *> tmp;
+											tmp.first = viewpngtmp;
+											tmp.second = viewenhtmp;
+											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256.png").c_str(), tmp));
+											//debug(fn.c_str());
+											//debug("LOADED FROM DISC");
+										}
+									}
+								}
+							}
+						} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256RP.png").exists()) {
+							if (!listEntry.viewEnhanced) {
+								Common::String fileName = folder.getChild(fn + "_256RP.png").getName();
+								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+								if (!file) {
+									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+								} else {
+									//debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+									Graphics::Surface *viewpngtmp = loadCelPNGCLUTOverridePaint(file);
+									listEntry.viewpng = viewpngtmp;
+									if (listEntry.viewpng) {
+										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+										listEntry.viewenh = viewenhtmp;
+										if (listEntry.viewenh) {
+											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+											listEntry.viewEnhanced = true;
+											listEntry.enhancedIs256 = true;
+											std::pair<Graphics::Surface *, const byte *> tmp;
+											tmp.first = viewpngtmp;
+											tmp.second = viewenhtmp;
+											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256RP.png").c_str(), tmp));
+											//debug(fn.c_str());
+											//debug("LOADED FROM DISC");
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		view->draw(listEntry.viewpng, listEntry.viewenh, listEntry.pixelsLength, listEntry.viewEnhanced, listEntry.enhancedIs256, celRect, clipRect, clipRectTranslated, loopNo, celNo, tweenNo, priority, paletteNo, false);
 		if (!_screen->_picNotValidSci11) {
 			_screen->copyDisplayRectToScreen(clipRectTranslated);
 		}
@@ -198,21 +599,10 @@ void GfxPaint16::invertRect(const Common::Rect &rect) {
 
 // used in SCI0early exclusively
 void GfxPaint16::invertRectViaXOR(const Common::Rect &rect) {
-	Common::Rect r = rect;
-	int16 x, y;
-	byte curVisual;
-
-	r.clip(_ports->_curPort->rect);
-	if (r.isEmpty()) // nothing to invert
-		return;
-
-	_ports->offsetRect(r);
-	for (y = r.top; y < r.bottom; y++) {
-		for (x = r.left; x < r.right; x++) {
-			curVisual = _screen->getVisual(x, y);
-			_screen->putPixel(x, y, GFX_SCREEN_MASK_VISUAL, curVisual ^ 0x0f, 0, 0);
-		}
-	}
+	int16 oldpenmode = _ports->_curPort->penMode;
+	_ports->_curPort->penMode = 2;
+	fillRect(rect, GFX_SCREEN_MASK_VISUAL, _ports->_curPort->penClr, _ports->_curPort->backClr);
+	_ports->_curPort->penMode = oldpenmode;
 }
 
 void GfxPaint16::eraseRect(const Common::Rect &rect) {
@@ -237,20 +627,35 @@ void GfxPaint16::fillRect(const Common::Rect &rect, int16 drawFlags, byte color,
 	// Doing visual first
 	if (drawFlags & GFX_SCREEN_MASK_VISUAL) {
 		if (oldPenMode == 2) { // invert mode
-			for (y = r.top; y < r.bottom; y++) {
-				for (x = r.left; x < r.right; x++) {
-					curVisual = _screen->getVisual(x, y);
-					if (curVisual == color) {
-						_screen->putPixel(x, y, GFX_SCREEN_MASK_VISUAL, priority, 0, 0);
-					} else if (curVisual == priority) {
-						_screen->putPixel(x, y, GFX_SCREEN_MASK_VISUAL, color, 0, 0);
+			switch (_screen->_upscaledHires) {
+				case GFX_SCREEN_UPSCALED_320x200_X_EGA: {
+					for (y = r.top * g_sci->_enhancementMultiplier; y < r.bottom * g_sci->_enhancementMultiplier; y++) {
+						for (x = r.left * g_sci->_enhancementMultiplier; x < r.right * g_sci->_enhancementMultiplier; x++) {
+							_screen->putPixelR(x, y, GFX_SCREEN_MASK_VISUAL, 255 - _screen->_displayedScreenR[(y * (_screen->_width * g_sci->_enhancementMultiplier)) + x], 255, 0, 0, true);
+						    _screen->putPixelG(x, y, GFX_SCREEN_MASK_VISUAL, 255 - _screen->_displayedScreenG[(y * (_screen->_width * g_sci->_enhancementMultiplier)) + x], 255, 0, 0, true);
+						    _screen->putPixelB(x, y, GFX_SCREEN_MASK_VISUAL, 255 - _screen->_displayedScreenB[(y * (_screen->_width * g_sci->_enhancementMultiplier)) + x], 255, 0, 0, true);
+						}
 					}
+					break;
+				}
+				default: {
+					for (y = r.top; y < r.bottom; y++) {
+						for (x = r.left; x < r.right; x++) {
+							curVisual = _screen->getVisual(x, y);
+							if (curVisual == color) {
+								_screen->putPixel(x, y, GFX_SCREEN_MASK_VISUAL, priority, 0, 0, true);
+							} else if (curVisual == priority) {
+								_screen->putPixel(x, y, GFX_SCREEN_MASK_VISUAL, color, 0, 0, true);
+							}
+						}
+					}
+					break;
 				}
 			}
 		} else { // just fill rect with color
 			for (y = r.top; y < r.bottom; y++) {
 				for (x = r.left; x < r.right; x++) {
-					_screen->putPixel(x, y, GFX_SCREEN_MASK_VISUAL, color, 0, 0);
+					_screen->putPixel(x, y, GFX_SCREEN_MASK_VISUAL, color, 0, 0, true);
 				}
 			}
 		}
@@ -267,13 +672,13 @@ void GfxPaint16::fillRect(const Common::Rect &rect, int16 drawFlags, byte color,
 	if (oldPenMode != 2) {
 		for (y = r.top; y < r.bottom; y++) {
 			for (x = r.left; x < r.right; x++) {
-				_screen->putPixel(x, y, drawFlags, 0, priority, control);
+				_screen->putPixel(x, y, drawFlags, 0, priority, control, true);
 			}
 		}
 	} else {
 		for (y = r.top; y < r.bottom; y++) {
 			for (x = r.left; x < r.right; x++) {
-				_screen->putPixel(x, y, drawFlags, 0, !_screen->getPriority(x, y), !_screen->getControl(x, y));
+				_screen->putPixel(x, y, drawFlags, 0, !_screen->getPriority(x, y), !_screen->getControl(x, y), true);
 			}
 		}
 	}
@@ -300,6 +705,16 @@ void GfxPaint16::frameRect(const Common::Rect &rect) {
 
 void GfxPaint16::bitsShow(const Common::Rect &rect) {
 	Common::Rect workerRect(rect.left, rect.top, rect.right, rect.bottom);
+	if (workerRect.left > workerRect.right) {
+		int l = workerRect.left;
+		workerRect.left = workerRect.right;
+		workerRect.right = l;
+	}
+	if (workerRect.top > workerRect.bottom) {
+		int t = workerRect.top;
+		workerRect.top = workerRect.bottom;
+		workerRect.bottom = t;
+	}
 	workerRect.clip(_ports->_curPort->rect);
 	if (workerRect.isEmpty()) // nothing to show
 		return;
@@ -383,8 +798,14 @@ void GfxPaint16::kernelDrawPicture(GuiResourceId pictureId, int16 animationNr, b
 
 	if (_ports->isFrontWindow(_ports->_picWind)) {
 		_screen->_picNotValid = 1;
-		drawPicture(pictureId, mirroredFlag, addToFlag, EGApaletteNo);
-		_transitions->setup(animationNr, animationBlackoutFlag);
+		debug("pic.%u-pic.%u", g_sci->prevPictureId, pictureId);
+		g_sci->scene_transition = true;
+		g_sci->enhanced_bg_frame = 1;
+		g_sci->pictureId = pictureId;
+			drawPicture(pictureId, mirroredFlag, addToFlag, EGApaletteNo);
+
+			_transitions->setup(100, animationBlackoutFlag);
+			g_sci->prevPictureId = pictureId;
 	} else {
 		// We need to set it for SCI1EARLY+ (sierra sci also did so), otherwise we get at least the following issues:
 		//  LSL5 (english) - last wakeup (taj mahal flute dream)
@@ -395,7 +816,10 @@ void GfxPaint16::kernelDrawPicture(GuiResourceId pictureId, int16 animationNr, b
 		if (getSciVersion() >= SCI_VERSION_1_EARLY)
 			_screen->_picNotValid = 1;
 		_ports->beginUpdate(_ports->_picWind);
+		g_sci->pictureId = pictureId;
 		drawPicture(pictureId, mirroredFlag, addToFlag, EGApaletteNo);
+		
+		g_sci->prevPictureId = pictureId;
 		_ports->endUpdate(_ports->_picWind);
 	}
 	_ports->setPort(oldPort);
@@ -407,7 +831,7 @@ void GfxPaint16::kernelDrawCel(GuiResourceId viewId, int16 loopNo, int16 celNo, 
 	if ((!hiresMode) || (!_screen->getUpscaledHires())) {
 		drawCelAndShow(viewId, loopNo, celNo, leftPos, topPos, priority, paletteNo, scaleX, scaleY);
 	} else {
-		drawHiresCelAndShow(viewId, loopNo, celNo, leftPos, topPos, priority, paletteNo, upscaledHiresHandle);
+		drawHiresCelAndShow(viewId, loopNo, celNo, 0, leftPos, topPos, priority, paletteNo, upscaledHiresHandle);
 	}
 }
 

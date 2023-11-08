@@ -73,11 +73,11 @@ GfxFrameout::GfxFrameout(SegManager *segMan, GfxPalette32 *palette, GfxTransitio
 	_lastScreenUpdateTick(0) {
 
 	if (g_sci->getGameId() == GID_PHANTASMAGORIA) {
-		_currentBuffer.create(630, 450, Graphics::PixelFormat::createFormatCLUT8());
+		_currentBuffer.create(630 * g_sci->_enhancementMultiplier, 450 * g_sci->_enhancementMultiplier, Graphics::PixelFormat::createFormatCLUT8());
 	} else if (_isHiRes) {
-		_currentBuffer.create(640, 480, Graphics::PixelFormat::createFormatCLUT8());
+		_currentBuffer.create(640 * g_sci->_enhancementMultiplier, 480 * g_sci->_enhancementMultiplier, Graphics::PixelFormat::createFormatCLUT8());
 	} else {
-		_currentBuffer.create(320, 200, Graphics::PixelFormat::createFormatCLUT8());
+		_currentBuffer.create(320 * g_sci->_enhancementMultiplier, 200 * g_sci->_enhancementMultiplier, Graphics::PixelFormat::createFormatCLUT8());
 	}
 	initGraphics(_currentBuffer.w, _currentBuffer.h);
 

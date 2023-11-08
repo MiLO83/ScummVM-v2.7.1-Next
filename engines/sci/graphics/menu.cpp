@@ -38,7 +38,9 @@
 #include "sci/graphics/menu.h"
 
 namespace Sci {
-
+int16 colorBackPrev;
+int16 colorPenPrev;
+Common::String statusText = "SCUMMVMEXT BETA";
 GfxMenu::GfxMenu(EventManager *event, SegManager *segMan, GfxPorts *ports, GfxPaint16 *paint16, GfxText16 *text16, GfxScreen *screen, GfxCursor *cursor)
 	: _event(event), _segMan(segMan), _ports(ports), _paint16(paint16), _text16(text16), _screen(screen), _cursor(cursor) {
 
@@ -61,7 +63,11 @@ GfxMenu::~GfxMenu() {
 
 	_list.clear();
 }
-
+void GfxMenu::SaveMenuBits() {
+	_statusSaveHandle = _paint16->bitsSave(_ports->_statusRect, GFX_SCREEN_MASK_VISUAL);
+	_paint16->bitsRestore(_statusSaveHandle);
+	_paint16->bitsShow(_ports->_statusRect);
+}
 void GfxMenu::reset() {
 	_list.clear();
 	_itemList.clear();
@@ -537,6 +543,8 @@ reg_t GfxMenu::kernelSelect(reg_t eventObject, bool pauseSound) {
 	if (itemEntry)
 		return make_reg(0, (itemEntry->menuId << 8) | (itemEntry->id));
 	return NULL_REG;
+	_paint16->bitsRestore(_statusSaveHandle);
+	_paint16->bitsShow(_ports->_statusRect);
 }
 
 GuiMenuItemEntry *GfxMenu::interactiveGetItem(uint16 menuId, uint16 itemId, bool menuChanged) {
@@ -693,7 +701,7 @@ void GfxMenu::drawMenu(uint16 oldMenuId, uint16 newMenuId) {
 				pixelPos.y = topPos + (_ports->_curPort->fontHeight >> 1) - 1;
 				pixelPos.x = _menuRect.left - 7;
 				while (pixelPos.x < (_menuRect.right - 1)) {
-					_screen->putPixel(pixelPos.x, pixelPos.y, GFX_SCREEN_MASK_VISUAL, 0, 0, 0);
+					_screen->putPixel(pixelPos.x, pixelPos.y, GFX_SCREEN_MASK_VISUAL, 0, 0, 0, false);
 					pixelPos.x += 2;
 				}
 			}
@@ -716,6 +724,8 @@ void GfxMenu::drawMenu(uint16 oldMenuId, uint16 newMenuId) {
 		_menuRect.left++;
 	}
 	_menuRect.bottom++;
+	_paint16->bitsRestore(_statusSaveHandle);
+	_paint16->bitsShow(_ports->_statusRect);
 	_paint16->bitsShow(_menuRect);
 }
 
@@ -745,6 +755,8 @@ void GfxMenu::interactiveEnd(bool pauseSound) {
 		g_sci->_soundCmd->pauseAll(false);
 	if (!_mouseOldState)
 		_cursor->kernelHide();
+	_paint16->bitsRestore(_statusSaveHandle);
+	_paint16->bitsShow(_ports->_statusRect);
 }
 
 uint16 GfxMenu::mouseFindMenuSelection(Common::Point mousePosition) {
@@ -822,11 +834,32 @@ GuiMenuItemEntry *GfxMenu::interactiveWithKeyboard() {
 	_ports->penColor(0);
 	_ports->backColor(_screen->getColorWhite());
 
+	_paint16->fillRect(_ports->_menuBarRect, 1, _screen->getColorWhite());
+	_ports->penColor(colorBackPrev);
+
+	_ports->_statusRect = _ports->_menuBarRect;
+	_paint16->fillRect(_ports->_menuBarRect, 1, colorBackPrev);
+	_ports->penColor(colorPenPrev);
+	Common::String score = "Score : " + Common::String::format("%u", g_sci->getEngineState()->variables[VAR_GLOBAL][kGlobalVarScore].toUint16());
+	if (!g_sci->isLanguageRTL()) {
+		_ports->moveTo(0, 1);
+	} else {
+		int16 textWidth;
+		int16 textHeight;
+		_text16->StringWidth(statusText, _text16->GetFontId(), textWidth, textHeight);
+		_ports->moveTo(_screen->getWidth() - textWidth, 1);
+	}
+	//_text16->DrawStatus(score);
+	_text16->DrawStatus(statusText);
+
+	_paint16->bitsShow(_ports->_menuBarRect);
+	debug(statusText.c_str());
+	_barSaveHandle = _paint16->bitsSave(_ports->_menuRect, GFX_SCREEN_MASK_VISUAL);
 	drawBar();
 	drawMenu(0, curItemEntry->menuId);
 	invertMenuSelection(curItemEntry->id);
 	_paint16->bitsShow(_ports->_menuRect);
-	_paint16->bitsShow(_menuRect);
+	//_paint16->bitsShow(_menuRect); ?? MiLO
 
 	int multiplier = !g_sci->isLanguageRTL() ? 1 : -1;
 
@@ -930,6 +963,7 @@ GuiMenuItemEntry *GfxMenu::interactiveWithKeyboard() {
 			} break;
 
 		case kSciEventNone:
+			_paint16->bitsShow(_ports->_statusRect);
 			g_sci->sleep(2500 / 1000);
 			break;
 
@@ -957,9 +991,34 @@ GuiMenuItemEntry *GfxMenu::interactiveWithMouse() {
 	calculateMenuAndItemWidth();
 	_barSaveHandle = _paint16->bitsSave(_ports->_menuRect, GFX_SCREEN_MASK_VISUAL);
 
+	_ports->_statusRect = _ports->_menuBarRect;
 	_ports->penColor(0);
 	_ports->backColor(_screen->getColorWhite());
+	
+	_paint16->fillRect(_ports->_menuBarRect, 1, _screen->getColorWhite());
+	_ports->penColor(colorBackPrev);
 
+	_paint16->bitsShow(_ports->_menuBarRect);
+	_paint16->fillRect(_ports->_menuBarRect, 1, colorBackPrev);
+	_ports->penColor(colorPenPrev);
+	Common::String score = "Score : " + Common::String::format("%u", g_sci->getEngineState()->variables[VAR_GLOBAL][kGlobalVarScore].toUint16());
+	if (!g_sci->isLanguageRTL()) {
+		_ports->moveTo(0, 1);
+	} else {
+		int16 textWidth;
+		int16 textHeight;
+		_text16->StringWidth(statusText, _text16->GetFontId(), textWidth, textHeight);
+		_ports->moveTo(_screen->getWidth() - textWidth, 1);
+	}
+	//_text16->DrawStatus(score);
+	_text16->DrawStatus(statusText);
+	_paint16->fillRect(_ports->_menuLine, 1, 0);
+
+	_paint16->bitsShow(_ports->_menuBarRect);
+	debug(statusText.c_str());
+	_barSaveHandle = _paint16->bitsSave(_ports->_menuRect, GFX_SCREEN_MASK_VISUAL);
+
+	//_statusSaveHandle = _paint16->bitsSave(_ports->_statusRect, GFX_SCREEN_MASK_VISUAL);
 	drawBar();
 	_paint16->bitsShow(_ports->_menuRect);
 
@@ -968,13 +1027,21 @@ GuiMenuItemEntry *GfxMenu::interactiveWithMouse() {
 
 		switch (curEvent.type) {
 		case kSciEventMouseRelease:
-			if ((curMenuId == 0) || (curItemId == 0))
-				return nullptr;
-			if ((!curItemEntry->enabled) || (curItemEntry->separatorLine))
-				return nullptr;
+			if ((curMenuId == 0) || (curItemId == 0)) {
+				_paint16->bitsRestore(_statusSaveHandle);
+				_paint16->bitsShow(_ports->_statusRect);
+				return NULL;
+			}
+			if ((!curItemEntry->enabled) || (curItemEntry->separatorLine)) {
+				_paint16->bitsRestore(_statusSaveHandle);
+				_paint16->bitsShow(_ports->_statusRect);
+				return NULL;
+			}
 			return curItemEntry;
 
 		case kSciEventNone:
+			_paint16->bitsRestore(_statusSaveHandle);
+			_paint16->bitsShow(_ports->_statusRect);
 			g_sci->sleep(2500 / 1000);
 			break;
 
@@ -994,13 +1061,6 @@ GuiMenuItemEntry *GfxMenu::interactiveWithMouse() {
 			curItemEntry = interactiveGetItem(curMenuId, newItemId, false);
 		}
 
-		if (newItemId != curItemId) {
-			// Item changed
-			invertMenuSelection(curItemId);
-			invertMenuSelection(newItemId);
-			curItemId = newItemId;
-		}
-
 		if (newMenuId != curMenuId) {
 			// Menu changed, remove cur menu and paint new menu
 			drawMenu(curMenuId, newMenuId);
@@ -1009,6 +1069,13 @@ GuiMenuItemEntry *GfxMenu::interactiveWithMouse() {
 				firstMenuChange = false;
 			}
 			curMenuId = newMenuId;
+		} else {
+			if (newItemId != curItemId) {
+				// Item changed
+				invertMenuSelection(curItemId);
+				invertMenuSelection(newItemId);
+				curItemId = newItemId;
+			}
 		}
 
 	}
@@ -1017,6 +1084,12 @@ GuiMenuItemEntry *GfxMenu::interactiveWithMouse() {
 
 void GfxMenu::kernelDrawStatus(const char *text, int16 colorPen, int16 colorBack) {
 	Port *oldPort = _ports->setPort(_ports->_menuPort);
+	colorBackPrev = colorBack;
+	colorPenPrev = colorPen;
+	_ports->_statusRect = _ports->_menuBarRect;
+	Common::String sttmp = text;
+	if (sttmp.contains("Score") || sttmp.contains("Quest"))
+		statusText = text;
 
 	_paint16->fillRect(_ports->_menuBarRect, 1, colorBack);
 	_ports->penColor(colorPen);
@@ -1025,30 +1098,59 @@ void GfxMenu::kernelDrawStatus(const char *text, int16 colorPen, int16 colorBack
 	} else {
 		int16 textWidth;
 		int16 textHeight;
-		_text16->StringWidth(text, _text16->GetFontId(), textWidth, textHeight);
+		_text16->StringWidth(statusText, _text16->GetFontId(), textWidth, textHeight);
 		_ports->moveTo(_screen->getWidth() - textWidth, 1);
 	}
-	_text16->DrawStatus(text);
+	
+	_text16->DrawStatus(statusText);
+
 	_paint16->bitsShow(_ports->_menuBarRect);
+
+	_ports->setPort(oldPort);
 	// Also draw the line under the status bar. Normally, this is never drawn,
 	// but we need it to be drawn because Dr. Brain 1 Mac draws over it when
 	// it displays the icon bar. SSCI used negative rectangles to erase the
 	// area after drawing the icon bar, but this is a much cleaner way of
 	// achieving the same effect.
-	_paint16->fillRect(_ports->_menuLine, 1, 0);
-	_paint16->bitsShow(_ports->_menuLine);
+
+	debug(statusText.c_str());
 	_ports->setPort(oldPort);
+
 }
 
 void GfxMenu::kernelDrawMenuBar(bool clear) {
+	Port *oldPort = _ports->setPort(_ports->_menuPort);
 	if (!clear) {
-		Port *oldPort = _ports->setPort(_ports->_menuPort);
+
 		calculateMenuWidth();
 		drawBar();
 		_paint16->bitsShow(_ports->_menuBarRect);
 		_ports->setPort(oldPort);
 	} else {
-		kernelDrawStatus("", 0, 0);
+		_paint16->fillRect(_ports->_menuBarRect, 1, colorBackPrev);
+		_ports->penColor(colorPenPrev);
+		if (!g_sci->isLanguageRTL()) {
+			_ports->moveTo(0, 1);
+		} else {
+			int16 textWidth;
+			int16 textHeight;
+			_text16->StringWidth(statusText, _text16->GetFontId(), textWidth, textHeight);
+			_ports->moveTo(_screen->getWidth() - textWidth, 1);
+		}
+
+		_text16->DrawStatus(statusText);
+
+		_paint16->bitsShow(_ports->_menuBarRect);
+		_ports->setPort(oldPort);
+		// Also draw the line under the status bar. Normally, this is never drawn,
+		// but we need it to be drawn because Dr. Brain 1 Mac draws over it when
+		// it displays the icon bar. SSCI used negative rectangles to erase the
+		// area after drawing the icon bar, but this is a much cleaner way of
+		// achieving the same effect.
+
+		debug(statusText.c_str());
+
+		_ports->setPort(oldPort);
 	}
 }
 

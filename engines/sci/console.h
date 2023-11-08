@@ -45,6 +45,8 @@ public:
 	 * is invoked, the debugger will activate and accept user input.
 	 */
 	void attach(const char *entry = nullptr) override;
+	void LoadAllExtraPNGConsole();
+
 
 private:
 	void preEnter() override;

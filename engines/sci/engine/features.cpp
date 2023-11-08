@@ -738,7 +738,7 @@ bool GameFeatures::generalMidiOnly() {
 		return (sound.exists() && sound.getTrackByType(/* AdLib */ 0) == nullptr);
 	}
 	default:
-		 if (g_sci->getPlatform() == Common::kPlatformMacintosh &&
+		 if (g_sci->getPlatform() == Common::kPlatformMacintosh && 
 			 getSciVersion() >= SCI_VERSION_2_1_MIDDLE) {
 			 return true;
 		 }

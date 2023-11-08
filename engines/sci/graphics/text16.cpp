@@ -47,17 +47,17 @@
 #include <algorithm>
 #include <engines/sci/sound/midiparser_sci.h>
 namespace Sci {
-	extern bool playingVideoCutscenes;
-	extern bool wasPlayingVideoCutscenes;
-	extern std::string videoCutsceneEnd;
-	extern std::string videoCutsceneStart;
-	extern MidiParser_SCI* midiMusic;
-	extern bool cutscene_mute_midi;
-	extern std::list<std::string> extraDIRList;
-	extern std::list<std::string>::iterator extraDIRListit;
-	extern std::string extraPath;
-GfxText16::GfxText16(GfxCache *cache, GfxPorts *ports, GfxPaint16 *paint16, GfxScreen *screen, GfxMacFontManager *macFontManager)
-	: _cache(cache), _ports(ports), _paint16(paint16), _screen(screen), _macFontManager(macFontManager) {
+extern bool playingVideoCutscenes;
+extern bool wasPlayingVideoCutscenes;
+extern std::string videoCutsceneEnd;
+extern std::string videoCutsceneStart;
+extern MidiParser_SCI *midiMusic;
+extern bool cutscene_mute_midi;
+extern std::list<std::string> extraDIRList;
+extern std::list<std::string>::iterator extraDIRListit;
+extern std::string extraPath;
+GfxText16::GfxText16(GfxCache *cache, GfxPorts *ports, GfxPaint16 *paint16, GfxScreen *screen)
+	: _cache(cache), _ports(ports), _paint16(paint16), _screen(screen) {
 	init();
 }
 
@@ -584,6 +584,11 @@ void GfxText16::Show(const char *text, int16 from, int16 len, GuiResourceId orgF
 	rect.bottom = rect.top + _ports->getPointSize();
 	rect.left = _ports->_curPort->curLeft;
 	Draw(text, from, len, orgFontId, orgPenColor);
+	if (g_sci->stereoscopic) {
+		g_sci->stereoRightEye = true;
+		Draw(text, from, len, orgFontId, orgPenColor);
+		g_sci->stereoRightEye = false;
+	}
 	rect.right = _ports->_curPort->curLeft;
 	_paint16->bitsShow(rect);
 }
@@ -810,6 +815,134 @@ void GfxText16::Box(const char *text, uint16 languageSplitter, bool show, const 
 				debug(10, ("NO " + fn + ".cts").c_str());
 			}
 		}
+		bool replaceText = false;
+		if (!extraDIRList.empty()) {
+			if (fileIsInExtraDIRText((txtFileName).c_str())) {
+				Common::String fileName = Common::FSNode(ConfMan.get("extrapath")).getChild(txtFileName).getName();
+				debug((fileName).c_str());
+				Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+				if (file) {
+					Common::String line, texttmp;
+					while (!file->eos()) {
+						texttmp += file->readLine() + "\n";
+					}
+					data = texttmp.c_str();
+
+					g_sci->_audio->PlayEnhancedTextAudio(trimmedTextStr, text);
+				}
+			}
+		}
+	}
+	int16 textWidth, maxTextWidth, textHeight, charCount;
+	int16 offset = 0;
+	int16 hline = 0;
+	GuiResourceId previousFontId = GetFontId();
+	int16 previousPenColor = _ports->_curPort->penClr;
+	bool doubleByteMode = false;
+	const char *curTextPos = text;
+	const char *curTextLine = text;
+
+	if (fontId != -1)
+		SetFont(fontId);
+	else
+		fontId = previousFontId;
+
+	// Check for Korean text
+	if (g_sci->getLanguage() == Common::KO_KOR) {
+		if (SwitchToFont1001OnKorean(curTextPos, languageSplitter)) {
+			doubleByteMode = true;
+			fontId = 1001;
+		}
+	}
+
+	// Reset reference code rects
+	_codeRefRects.clear();
+	_codeRefTempRect.left = _codeRefTempRect.top = -1;
+
+	maxTextWidth = 0;
+	while (*curTextPos) {
+		// We need to check for Shift-JIS every line
+		//  Police Quest 2 PC-9801 often draws English + Japanese text during the same call
+		if (g_sci->getLanguage() == Common::JA_JPN) {
+			if (SwitchToFont900OnSjis(curTextPos, languageSplitter))
+				doubleByteMode = true;
+		}
+
+		charCount = GetLongest(curTextPos, rect.width(), fontId);
+		if (charCount == 0)
+			break;
+		Width(curTextLine, 0, charCount, fontId, textWidth, textHeight, true);
+		maxTextWidth = MAX<int16>(maxTextWidth, textWidth);
+		switch (alignment) {
+		case SCI_TEXT16_ALIGNMENT_RIGHT:
+			if (!g_sci->isLanguageRTL())
+				offset = rect.width() - textWidth;
+			else
+				offset = 0;
+			break;
+		case SCI_TEXT16_ALIGNMENT_CENTER:
+			offset = (rect.width() - textWidth) / 2;
+			break;
+		case SCI_TEXT16_ALIGNMENT_LEFT:
+			if (!g_sci->isLanguageRTL())
+				offset = 0;
+			else
+				offset = rect.width() - textWidth;
+			break;
+
+		default:
+			warning("Invalid alignment %d used in TextBox()", alignment);
+		}
+
+
+		if (g_sci->isLanguageRTL())
+			// In the game fonts, characters have spacing on the left, and no spacing on the right,
+			// therefore, when we start drawing from the right, they "start from the border"
+			// e.g., in SQ3 Hebrew user's input prompt.
+			// We can't add spacing on the right of the Hebrew letters, because then characters in mixed
+			// English-Hebrew text might be stuck together.
+			// Therefore, we shift one pixel to the left, for proper spacing
+			offset--;
+
+		_ports->moveTo(rect.left + offset, rect.top + hline);
+
+		Common::String textString;
+		if (g_sci->isLanguageRTL()) {
+			const char *curTextLineOrig = curTextLine;
+			Common::String textLogical = Common::String(curTextLineOrig, (uint32)charCount);
+			textString = Common::convertBiDiString(textLogical, g_sci->getLanguage());
+			curTextLine = textString.c_str();
+		}
+
+		if (show) {
+			Show(curTextLine, 0, charCount, fontId, previousPenColor);
+		} else {
+			Draw(curTextLine, 0, charCount, fontId, previousPenColor);
+		}
+
+		hline += textHeight;
+		curTextLine = curTextPos;
+	}
+	SetFont(previousFontId);
+	_ports->penColor(previousPenColor);
+
+	if (doubleByteMode) {
+		// Kanji is written by pc98 rom to screen directly. Because of
+		// GetLongest() behavior (not cutting off the last char, that causes a
+		// new line), results in the script thinking that the text would need
+		// less space. The coordinate adjustment in fontsjis.cpp handles the
+		// incorrect centering because of that and this code actually shows all
+		// of the chars - if we don't do this, the scripts will only show most
+		// of the chars, but the last few pixels won't get shown most of the
+		// time.
+		Common::Rect kanjiRect = rect;
+		_ports->offsetRect(kanjiRect);
+		kanjiRect.left &= 0xFFC;
+		kanjiRect.right = kanjiRect.left + maxTextWidth;
+		kanjiRect.bottom = kanjiRect.top + hline;
+		kanjiRect.left *= 2; kanjiRect.right *= 2;
+		kanjiRect.top *= 2; kanjiRect.bottom *= 2;
+		_screen->copyDisplayRectToScreen(kanjiRect);
 	}
 }
 
@@ -824,6 +957,11 @@ void GfxText16::DrawString(const Common::String &textOrig) {
 		text = Common::convertBiDiString(textOrig, g_sci->getLanguage());
 
 	Draw(text.c_str(), 0, text.size(), previousFontId, previousPenColor);
+	if (g_sci->stereoscopic) {
+		g_sci->stereoRightEye = true;
+		Draw(text.c_str(), 0, text.size(), previousFontId, previousPenColor);
+		g_sci->stereoRightEye = false;
+	}
 	SetFont(previousFontId);
 	_ports->penColor(previousPenColor);
 }
@@ -858,6 +996,11 @@ void GfxText16::DrawStatus(const Common::String &strOrig) {
 		default:
 			charWidth = _font->getCharWidth(curChar);
 			_font->draw(curChar, _ports->_curPort->top + _ports->_curPort->curTop, _ports->_curPort->left + _ports->_curPort->curLeft, _ports->_curPort->penClr, _ports->_curPort->greyedOutput);
+			if (g_sci->stereoscopic) {
+				g_sci->stereoRightEye = true;
+				_font->draw(curChar, _ports->_curPort->top + _ports->_curPort->curTop, _ports->_curPort->left + _ports->_curPort->curLeft, _ports->_curPort->penClr, _ports->_curPort->greyedOutput);
+				g_sci->stereoRightEye = false;
+			}
 			_ports->_curPort->curLeft += charWidth;
 		}
 	}

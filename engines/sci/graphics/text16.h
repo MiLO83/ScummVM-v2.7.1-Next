@@ -44,7 +44,7 @@ class GfxMacFontManager;
  */
 class GfxText16 {
 public:
-	GfxText16(GfxCache *fonts, GfxPorts *ports, GfxPaint16 *paint16, GfxScreen *screen, GfxMacFontManager *macFontManager);
+	GfxText16(GfxCache *fonts, GfxPorts *ports, GfxPaint16 *paint16, GfxScreen *screen);
 	~GfxText16();
 
 	GuiResourceId GetFontId();

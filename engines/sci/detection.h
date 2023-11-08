@@ -43,6 +43,8 @@ namespace Sci {
 #define GAMEOPTION_PALETTE_MODS             GUIO_GAMEOPTIONS15
 #define GAMEOPTION_SQ1_BEARDED_MUSICIANS    GUIO_GAMEOPTIONS16
 #define GAMEOPTION_TTS                      GUIO_GAMEOPTIONS17
+#define GAMEOPTION_STEREOSCOPIC				GUIO_GAMEOPTIONS18
+#define GAMEOPTION_ENHANCE_GFX				GUI0_GAMEOPTIONS19
 
 enum SciGameId {
 	GID_ALL,
@@ -154,6 +156,15 @@ enum kMidiMode {
 	kMidiModeD110,
 	kMidiModeMT540,
 	kMidiModeCT460
+};
+
+/** Stereoscopic Mode */
+enum kStereoscopicMode {
+	kStereoscopicModeOff,
+	kStereoscopicMode2DDepth,
+	kStereoscopicModeFlat,
+	kStereoscopicModePair,
+	kStereoscopicModeDepth
 };
 
 } // End of namespace Sci

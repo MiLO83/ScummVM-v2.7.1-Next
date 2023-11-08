@@ -500,7 +500,7 @@ void Portrait::drawBitmap(uint16 bitmapNr) {
 	const byte *data = _bitmaps[bitmapNr].rawBitmap.getUnsafeDataAt(0, bitmapWidth * bitmapHeight);
 	for (int y = 0; y < bitmapHeight; y++) {
 		for (int x = 0; x < bitmapWidth; x++) {
-			_screen->putPixelOnDisplay(bitmapPosition.x + x, bitmapPosition.y + y, _portraitPalette.mapping[*data++]);
+			_screen->putPixelOnDisplay(bitmapPosition.x + x, bitmapPosition.y + y, _portraitPalette.mapping[*data++], false);
 		}
 		data += _bitmaps[bitmapNr].extraBytesPerLine;
 	}

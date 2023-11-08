@@ -60,6 +60,7 @@ private:
 	void reset();
 	void drawSci11Vga();
 	void drawCelData(const SciSpan<const byte> &inbuffer, int headerPos, int rlePos, int literalPos, int16 drawX, int16 drawY, int16 pictureX, int16 pictureY, bool isEGA);
+	void drawEnhancedBackground(const SciSpan<const byte> &data);
 	void drawVectorData(const SciSpan<const byte> &data);
 	bool vectorIsNonOpcode(byte pixel);
 	void vectorGetAbsCoords(const SciSpan<const byte> &data, uint &curPos, int16 &x, int16 &y);
@@ -83,12 +84,25 @@ private:
 	int16 _resourceId;
 	Resource *_resource;
 	int _resourceType;
-
+	
+	bool overlay;
+	bool surface;
 	bool _mirroredFlag;
 	bool _addToFlag;
 	int16 _EGApaletteNo;
 	byte _priority;
-
+	Graphics::Surface *png;
+	Graphics::Surface *pngPal;
+	Graphics::Surface *pngPrio;
+	Graphics::Surface *pngOverlay;
+	Graphics::Surface *pngSurface;
+	Graphics::Surface *pngDepth;
+	const byte *enh;
+	const byte *enhPal;
+	const byte *enhPrio;
+	const byte *enhOverlay;
+	const byte *enhSurface;
+	const byte *enhDepth;
 	// If true, we will show the whole EGA drawing process...
 	bool _EGAdrawingVisualize;
 };

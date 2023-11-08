@@ -36,6 +36,8 @@
 #include "sci/graphics/view.h"
 #include "sci/graphics/cursor.h"
 #include "sci/graphics/maciconbar.h"
+#include <engines/sci/graphics/animate.h>
+#include <image/png.h>
 
 namespace Sci {
 
@@ -102,6 +104,50 @@ void GfxCursor::purgeCache() {
 	_cachedCursors.clear();
 }
 
+extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> > viewsMap;
+extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator viewsMapit;
+
+Graphics::Surface *loadCelPNGCursor(Common::SeekableReadStream *s) {
+	Image::PNGDecoder d;
+
+	if (!s)
+		return nullptr;
+	d.loadStream(*s);
+	delete s;
+
+	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
+	return srf;
+}
+Graphics::Surface *loadCelPNGCLUTCursor(Common::SeekableReadStream *s) {
+	Image::PNGDecoder d;
+
+	if (!s)
+		return nullptr;
+	d.loadStream(*s);
+	delete s;
+	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8());
+	return srf;
+}
+
+Graphics::Surface *loadCelPNGCLUTOverrideCursor(Common::SeekableReadStream *s) {
+	Image::PNGDecoder d;
+
+	if (!s)
+		return nullptr;
+	d.loadStream(*s);
+	delete s;
+	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8(), d.getPalette());
+
+	for (int16 i = 0; i < 256; i++) {
+		g_sci->_gfxPalette16->_paletteOverride.colors[i].r = d.getPalette()[i * 3];
+		g_sci->_gfxPalette16->_paletteOverride.colors[i].g = d.getPalette()[(i * 3) + 1];
+		g_sci->_gfxPalette16->_paletteOverride.colors[i].b = d.getPalette()[(i * 3) + 2];
+	}
+	g_sci->_gfxPalette16->_sysPalette = g_sci->_gfxPalette16->_paletteOverride;
+	//memcpy((void *)g_sci->_gfxPalette16->_paletteOverride, d.getPalette(), sizeof(d.getPalette()));
+	//_tehScreen->setPalette(d.getPalette(), 0, 256, true);
+	return srf;
+}
 void GfxCursor::kernelSetShape(GuiResourceId resourceId) {
 	Resource *resource;
 	Common::Point hotspot = Common::Point(0, 0);
@@ -142,10 +188,10 @@ void GfxCursor::kernelSetShape(GuiResourceId resourceId) {
 	colorMapping[2] = SCI_CURSOR_SCI0_TRANSPARENCYCOLOR;
 	colorMapping[3] = _palette->matchColor(170, 170, 170) & SCI_PALETTE_MATCH_COLORMASK; // Grey
 	// TODO: Figure out if the grey color is hardcoded
-	// HACK for the magnifier cursor in LB1, fixes its color (bug #5971)
+	// HACK for the magnifier cursor in LB1, fixes its color (bug #3487092)
 	if (g_sci->getGameId() == GID_LAURABOW && resourceId == 1)
 		colorMapping[3] = _screen->getColorWhite();
-	// HACK for Longbow cursors, fixes the shade of grey they're using (bug #5983)
+	// HACK for Longbow cursors, fixes the shade of grey they're using (bug #3489101)
 	if (g_sci->getGameId() == GID_LONGBOW)
 		colorMapping[3] = _palette->matchColor(223, 223, 223) & SCI_PALETTE_MATCH_COLORMASK; // Light Grey
 
@@ -164,31 +210,209 @@ void GfxCursor::kernelSetShape(GuiResourceId resourceId) {
 	}
 
 	heightWidth = SCI_CURSOR_SCI0_HEIGHTWIDTH;
+	AnimateEntry listEntry;
+	listEntry.viewenh = NULL;
+	Common::FSNode folder;
+	if (ConfMan.hasKey("extrapath")) {
+		Common::String fn = "cursor";
+		bool stop = false;
+		fn += ".";
+		char loopNoStr[5];
+		sprintf(loopNoStr, "%u", resourceId);
+		for (int n = 0; n < 5; n++) {
+			if (stop == false)
+				if (loopNoStr[n] >= '0' && loopNoStr[n] <= '9') {
+					fn += loopNoStr[n];
+				} else {
+					stop = true;
+				}
+		}
 
-	if (_upscaledHires != GFX_SCREEN_UPSCALED_DISABLED && _upscaledHires != GFX_SCREEN_UPSCALED_480x300) {
-		// Scale cursor by 2x - note: sierra didn't do this, but it looks much better
-		heightWidth *= 2;
-		hotspot.x *= 2;
-		hotspot.y *= 2;
+		debug(fn.c_str());
+		bool preloaded = false;
+		//if (listEntry.viewpng == NULL)
+		{
+			if (viewsMap.size() > 0)
+				for (viewsMapit = viewsMap.begin();
+				     viewsMapit != viewsMap.end(); ++viewsMapit) {
 
-		Common::SpanOwner<SciSpan<byte> > upscaledBitmap;
-		upscaledBitmap->allocate(heightWidth * heightWidth, "upscaled cursor bitmap");
-		_screen->scale2x(*rawBitmap, *upscaledBitmap, SCI_CURSOR_SCI0_HEIGHTWIDTH, SCI_CURSOR_SCI0_HEIGHTWIDTH);
-		rawBitmap.moveFrom(upscaledBitmap);
+					if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
+
+						//debug(viewsMapit->first.c_str());
+						std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+						listEntry.viewpng = tmp.first;
+						//debug("RELOADED FROM RAM");
+
+						listEntry.viewenh = tmp.second;
+						if (listEntry.viewenh) {
+							preloaded = true;
+							listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+							listEntry.viewEnhanced = true;
+							listEntry.enhancedIs256 = false;
+						}
+					}
+				if (strcmp(viewsMapit->first.c_str(), (fn + "_256.png").c_str()) == 0) {
+
+						//debug(viewsMapit->first.c_str());
+						std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+						listEntry.viewpng = tmp.first;
+						//debug("RELOADED FROM RAM");
+
+						listEntry.viewenh = tmp.second;
+						if (listEntry.viewenh) {
+							preloaded = true;
+							listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+							listEntry.viewEnhanced = true;
+							listEntry.enhancedIs256 = true;
+						}
+					}
+				if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
+
+						//debug(viewsMapit->first.c_str());
+						std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+						listEntry.viewpng = tmp.first;
+						//debug("RELOADED FROM RAM");
+
+						listEntry.viewenh = tmp.second;
+						if (listEntry.viewenh) {
+							preloaded = true;
+							listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+							listEntry.viewEnhanced = true;
+							listEntry.enhancedIs256 = true;
+						}
+					}
+				}
+			if (!preloaded) {
+				if (ConfMan.hasKey("extrapath")) {
+					if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + ".png").exists()) {
+						if (!listEntry.viewEnhanced) {
+							Common::String fileName = folder.getChild(fn + ".png").getName();
+							Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+							if (!file) {
+								//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+							} else {
+								////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+								Graphics::Surface *viewpngtmp = loadCelPNGCursor(file);
+								listEntry.viewpng = viewpngtmp;
+								if (listEntry.viewpng) {
+									const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+									listEntry.viewenh = viewenhtmp;
+									if (listEntry.viewenh) {
+										listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+										listEntry.viewEnhanced = true;
+										listEntry.enhancedIs256 = false;
+										std::pair<Graphics::Surface *, const byte *> tmp;
+										tmp.first = viewpngtmp;
+										tmp.second = viewenhtmp;
+										viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >(fn.c_str(), tmp));
+										//debug(fn.c_str());
+										//debug("LOADED FROM DISC");
+									}
+								}
+							}
+						}
+					} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256.png").exists()) {
+						if (!listEntry.viewEnhanced) {
+							Common::String fileName = folder.getChild(fn + "_256.png").getName();
+							Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+							if (!file) {
+								//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+							} else {
+								////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+								Graphics::Surface *viewpngtmp = loadCelPNGCLUTCursor(file);
+								listEntry.viewpng = viewpngtmp;
+								if (listEntry.viewpng) {
+									const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+									listEntry.viewenh = viewenhtmp;
+									if (listEntry.viewenh) {
+										listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+										listEntry.viewEnhanced = true;
+										listEntry.enhancedIs256 = true;
+										std::pair<Graphics::Surface *, const byte *> tmp;
+										tmp.first = viewpngtmp;
+										tmp.second = viewenhtmp;
+										viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256.png").c_str(), tmp));
+										//debug(fn.c_str());
+										//debug("LOADED FROM DISC");
+									}
+								}
+							}
+						}
+					} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256RP.png").exists()) {
+						if (!listEntry.viewEnhanced) {
+							Common::String fileName = folder.getChild(fn + "_256RP.png").getName();
+							Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+							if (!file) {
+								//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+							} else {
+								//debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+								Graphics::Surface *viewpngtmp = loadCelPNGCLUTOverrideCursor(file);
+								listEntry.viewpng = viewpngtmp;
+								if (listEntry.viewpng) {
+									const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+									listEntry.viewenh = viewenhtmp;
+									if (listEntry.viewenh) {
+										listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+										listEntry.viewEnhanced = true;
+										listEntry.enhancedIs256 = true;
+										std::pair<Graphics::Surface *, const byte *> tmp;
+										tmp.first = viewpngtmp;
+										tmp.second = viewenhtmp;
+										viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256RP.png").c_str(), tmp));
+										//debug(fn.c_str());
+										//debug("LOADED FROM DISC");
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 	}
+	if (listEntry.viewenh == NULL) {
+		if (_upscaledHires != GFX_SCREEN_UPSCALED_DISABLED && _upscaledHires != GFX_SCREEN_UPSCALED_480x300 && g_sci->_gameId != GID_KQ4) {
+			// Scale cursor by 2x - note: sierra didn't do this, but it looks much better
+			heightWidth *= 2;
+			hotspot.x *= 2;
+			hotspot.y *= 2;
+			debug("Cursor heightWidth : %u", heightWidth);
+			Common::SpanOwner<SciSpan<byte> > upscaledBitmap;
+			upscaledBitmap->allocate(heightWidth * heightWidth, "upscaled cursor bitmap");
+			_screen->scale2x(*rawBitmap, *upscaledBitmap, SCI_CURSOR_SCI0_HEIGHTWIDTH, SCI_CURSOR_SCI0_HEIGHTWIDTH);
+			rawBitmap.moveFrom(upscaledBitmap);
+		}
 
-	if (hotspot.x >= heightWidth || hotspot.y >= heightWidth) {
-		error("cursor %d's hotspot (%d, %d) is out of range of the cursor's dimensions (%dx%d)",
-				resourceId, hotspot.x, hotspot.y, heightWidth, heightWidth);
+		if (hotspot.x >= heightWidth || hotspot.y >= heightWidth) {
+			error("cursor %d's hotspot (%d, %d) is out of range of the cursor's dimensions (%dx%d)",
+			      resourceId, hotspot.x, hotspot.y, heightWidth, heightWidth);
+		}
+
+		CursorMan.replaceCursor(rawBitmap->getUnsafeDataAt(0, heightWidth * heightWidth), heightWidth, heightWidth, hotspot.x, hotspot.y, SCI_CURSOR_SCI0_TRANSPARENCYCOLOR);
+		if (g_system->getScreenFormat().bytesPerPixel != 1) {
+			byte buf[3 * 256];
+			g_sci->_gfxScreen->grabPalette(buf, 0, 256);
+			CursorMan.replaceCursorPalette(buf, 0, 256);
+		}
+	} else {
+		Graphics::PixelFormat pf = Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24);
+		const Graphics::PixelFormat *format = &pf;
+		if (_upscaledHires != GFX_SCREEN_UPSCALED_DISABLED && _upscaledHires != GFX_SCREEN_UPSCALED_480x300 && g_sci->_gameId != GID_KQ4) {
+			// Scale cursor by 2x - note: sierra didn't do this, but it looks much better
+			hotspot.x *= (listEntry.viewpng->w / heightWidth);
+			hotspot.y *= (listEntry.viewpng->h / heightWidth);
+			CursorMan.replaceCursor(listEntry.viewenh, listEntry.viewpng->w, listEntry.viewpng->h, hotspot.x, hotspot.y, SCI_CURSOR_SCI0_TRANSPARENCYCOLOR, false, format);
+		} else {
+			CursorMan.replaceCursor(listEntry.viewenh, listEntry.viewpng->w, listEntry.viewpng->h, hotspot.x, hotspot.y, SCI_CURSOR_SCI0_TRANSPARENCYCOLOR, false, format);
+		}
+		if (g_system->getScreenFormat().bytesPerPixel != 1) {
+			byte buf[3 * 256];
+			g_sci->_gfxScreen->grabPalette(buf, 0, 256);
+			CursorMan.replaceCursorPalette(buf, 0, 256);
+		}
+
 	}
-
-	CursorMan.replaceCursor(rawBitmap->getUnsafeDataAt(0, heightWidth * heightWidth), heightWidth, heightWidth, hotspot.x, hotspot.y, SCI_CURSOR_SCI0_TRANSPARENCYCOLOR);
-	if (g_system->getScreenFormat().bytesPerPixel != 1) {
-		byte buf[3*256];
-		g_sci->_gfxScreen->grabPalette(buf, 0, 256);
-		CursorMan.replaceCursorPalette(buf, 0, 256);
-	}
-
+	debug("Cursor heightWidth : %u", heightWidth);
 	kernelShow();
 }
 
@@ -218,9 +442,6 @@ void GfxCursor::kernelSetView(GuiResourceId viewNum, int loopNum, int celNum, Co
 		default:
 			break;
 		}
-	} else if (_useOriginalSQ4WinCursors) {
-		// Use the Windows black and white cursors
-		celNum += 1;
 	}
 
 	if (!_cachedCursors.contains(viewNum))
@@ -245,26 +466,209 @@ void GfxCursor::kernelSetView(GuiResourceId viewNum, int loopNum, int celNum, Co
 		delete cursorHotspot;
 		return;
 	}
+	AnimateEntry listEntry;
+	listEntry.viewenh = NULL;
+	Common::FSNode folder;
+	if (ConfMan.hasKey("extrapath")) {
+		Common::String fn = "cursor.";
+		bool stop = false;
+		char viewNoStr[5];
+		sprintf(viewNoStr, "%u", viewNum);
+		for (int n = 0; n < 5; n++) {
+			if (stop == false)
+				if (viewNoStr[n] >= '0' && viewNoStr[n] <= '9') {
+					fn += viewNoStr[n];
+				} else {
+					stop = true;
+				}
+		}
+		stop = false;
 
-	const SciSpan<const byte> &rawBitmap = cursorView->getBitmap(loopNum, celNum);
-	if (_upscaledHires != GFX_SCREEN_UPSCALED_DISABLED && _upscaledHires != GFX_SCREEN_UPSCALED_480x300 && !_useOriginalKQ6WinCursors) {
-		// Scale cursor by 2x - note: sierra didn't do this, but it looks much better
-		width *= 2;
-		height *= 2;
-		cursorHotspot->x *= 2;
-		cursorHotspot->y *= 2;
-		Common::SpanOwner<SciSpan<byte> > cursorBitmap;
-		cursorBitmap->allocate(width * height, "upscaled cursor bitmap");
-		_screen->scale2x(rawBitmap, *cursorBitmap, celInfo->width, celInfo->height);
-		CursorMan.replaceCursor(cursorBitmap->getUnsafeDataAt(0, width * height), width, height, cursorHotspot->x, cursorHotspot->y, clearKey);
+		fn += ".";
+		char loopNoStr[5];
+		sprintf(loopNoStr, "%u", loopNum);
+		for (int n = 0; n < 5; n++) {
+			if (stop == false)
+				if (loopNoStr[n] >= '0' && loopNoStr[n] <= '9') {
+					fn += loopNoStr[n];
+				} else {
+					stop = true;
+				}
+		}
+		stop = false;
+		fn += ".";
+		char celNoStr[5];
+		sprintf(celNoStr, "%u", celNum);
+		for (int n = 0; n < 5; n++) {
+			if (stop == false)
+				if (celNoStr[n] >= '0' && celNoStr[n] <= '9') {
+					fn += celNoStr[n];
+				} else {
+					stop = true;
+				}
+		}
+		debug(fn.c_str());
+		bool preloaded = false;
+		//if (listEntry.viewpng == NULL)
+		{
+			if (viewsMap.size() > 0)
+				for (viewsMapit = viewsMap.begin();
+				     viewsMapit != viewsMap.end(); ++viewsMapit) {
+
+					if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
+
+						//debug(viewsMapit->first.c_str());
+						std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
+						listEntry.viewpng = tmp.first;
+						//debug("RELOADED FROM RAM");
+
+						listEntry.viewenh = tmp.second;
+						if (listEntry.viewenh) {
+							preloaded = true;
+							listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+							listEntry.viewEnhanced = true;
+							listEntry.enhancedIs256 = false;
+						}
+					}
+				}
+			if (!preloaded) {
+				if (ConfMan.hasKey("extrapath")) {
+					if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + ".png").exists()) {
+						if (!listEntry.viewEnhanced) {
+							Common::String fileName = folder.getChild(fn + ".png").getName();
+							Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+							if (!file) {
+								//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+							} else {
+								////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+								Graphics::Surface *viewpngtmp = loadCelPNGCursor(file);
+								listEntry.viewpng = viewpngtmp;
+								if (listEntry.viewpng) {
+									const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+									listEntry.viewenh = viewenhtmp;
+									if (listEntry.viewenh) {
+										listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+										listEntry.viewEnhanced = true;
+										listEntry.enhancedIs256 = false;
+										std::pair<Graphics::Surface *, const byte *> tmp;
+										tmp.first = viewpngtmp;
+										tmp.second = viewenhtmp;
+										viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >(fn.c_str(), tmp));
+										//debug(fn.c_str());
+										//debug("LOADED FROM DISC");
+									}
+								}
+							}
+						}
+					} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256.png").exists()) {
+						if (!listEntry.viewEnhanced) {
+							Common::String fileName = folder.getChild(fn + "_256.png").getName();
+							Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+							if (!file) {
+								//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+							} else {
+								////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+								Graphics::Surface *viewpngtmp = loadCelPNGCLUTCursor(file);
+								listEntry.viewpng = viewpngtmp;
+								if (listEntry.viewpng) {
+									const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+									listEntry.viewenh = viewenhtmp;
+									if (listEntry.viewenh) {
+										listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+										listEntry.viewEnhanced = true;
+										listEntry.enhancedIs256 = true;
+										std::pair<Graphics::Surface *, const byte *> tmp;
+										tmp.first = viewpngtmp;
+										tmp.second = viewenhtmp;
+										viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256.png").c_str(), tmp));
+										//debug(fn.c_str());
+										//debug("LOADED FROM DISC");
+									}
+								}
+							}
+						}
+					} else if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(fn + "_256RP.png").exists()) {
+						if (!listEntry.viewEnhanced) {
+							Common::String fileName = folder.getChild(fn + "_256RP.png").getName();
+							Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
+							if (!file) {
+								//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
+							} else {
+								//debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
+								Graphics::Surface *viewpngtmp = loadCelPNGCLUTOverrideCursor(file);
+								listEntry.viewpng = viewpngtmp;
+								if (listEntry.viewpng) {
+									const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
+									listEntry.viewenh = viewenhtmp;
+									if (listEntry.viewenh) {
+										listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
+										listEntry.viewEnhanced = true;
+										listEntry.enhancedIs256 = true;
+										std::pair<Graphics::Surface *, const byte *> tmp;
+										tmp.first = viewpngtmp;
+										tmp.second = viewenhtmp;
+										viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256RP.png").c_str(), tmp));
+										//debug(fn.c_str());
+										//debug("LOADED FROM DISC");
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if (listEntry.viewenh == NULL) {
+		
+		const SciSpan<const byte> &rawBitmap = cursorView->getBitmap(loopNum, celNum);
+		if (_upscaledHires != GFX_SCREEN_UPSCALED_DISABLED && _upscaledHires != GFX_SCREEN_UPSCALED_480x300 && !_useOriginalKQ6WinCursors) {
+			// Scale cursor by 2x - note: sierra didn't do this, but it looks much better
+			width *= 2;
+			height *= 2;
+			cursorHotspot->x *= 2;
+			cursorHotspot->y *= 2;
+			Common::SpanOwner<SciSpan<byte> > cursorBitmap;
+			cursorBitmap->allocate(width * height, "upscaled cursor bitmap");
+			_screen->scale2x(rawBitmap, *cursorBitmap, celInfo->width, celInfo->height);
+			CursorMan.replaceCursor(cursorBitmap->getUnsafeDataAt(0, width * height), width, height, cursorHotspot->x, cursorHotspot->y, clearKey);
+		} else {
+			CursorMan.replaceCursor(rawBitmap.getUnsafeDataAt(0, width * height), width, height, cursorHotspot->x, cursorHotspot->y, clearKey);
+		}
+		if (g_system->getScreenFormat().bytesPerPixel != 1) {
+			byte buf[3 * 256];
+			g_sci->_gfxScreen->grabPalette(buf, 0, 256);
+			CursorMan.replaceCursorPalette(buf, 0, 256);
+			
+		}
+		debug("Cursor width : %u", width);
+		debug("Cursor height : %u", height);
 	} else {
-		CursorMan.replaceCursor(rawBitmap.getUnsafeDataAt(0, width * height), width, height, cursorHotspot->x, cursorHotspot->y, clearKey);
+		Graphics::PixelFormat pf = Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24);
+		const Graphics::PixelFormat *format = &pf;
+		if (_upscaledHires != GFX_SCREEN_UPSCALED_DISABLED && _upscaledHires != GFX_SCREEN_UPSCALED_480x300 && !_useOriginalKQ6WinCursors) {
+			// Scale cursor by 2x - note: sierra didn't do this, but it looks much better
+			cursorHotspot->x *= (listEntry.viewpng->w / width);
+			cursorHotspot->y *= (listEntry.viewpng->h / height);
+			width = listEntry.viewpng->w;
+			height = listEntry.viewpng->h;		
+			CursorMan.replaceCursor(listEntry.viewenh, width, height, cursorHotspot->x, cursorHotspot->y, clearKey, false, format);
+		} else {
+			CursorMan.replaceCursor(listEntry.viewenh, width, height, cursorHotspot->x, cursorHotspot->y, clearKey, false, format);
+		}
+		if (g_system->getScreenFormat().bytesPerPixel != 1) {
+			byte buf[3 * 256];
+			g_sci->_gfxScreen->grabPalette(buf, 0, 256);
+			CursorMan.replaceCursorPalette(buf, 0, 256);
+		}
+	
 	}
 	if (g_system->getScreenFormat().bytesPerPixel != 1) {
-		byte buf[3*256];
+		byte buf[3 * 256];
 		g_sci->_gfxScreen->grabPalette(buf, 0, 256);
 		CursorMan.replaceCursorPalette(buf, 0, 256);
 	}
+	
 
 	kernelShow();
 
@@ -292,7 +696,10 @@ void GfxCursor::setPosition(Common::Point pos) {
 	// position only when showing the cursor.
 	if (!_isVisible)
 		return;
-
+	if (g_sci->stereoscopic)
+	if (pos.x > _screen->getScriptWidth() / 2) {
+		pos.x -= _screen->getScriptWidth() / 2;
+	}
 	if (!_upscaledHires) {
 		g_system->warpMouse(pos.x, pos.y);
 	} else {
@@ -340,6 +747,21 @@ void GfxCursor::setPosition(Common::Point pos) {
 Common::Point GfxCursor::getPosition() {
 	Common::Point mousePos = g_system->getEventManager()->getMousePos();
 
+	if (g_sci->depth_rendering)
+		if (g_sci->enhanced_DEPTH) {
+		if (!g_sci->stereoscopic) {
+			mousePos.x = g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X[(mousePos.y) * g_sci->_gfxScreen->_displayWidth + (mousePos.x)];
+			mousePos.y = g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y[(mousePos.y) * g_sci->_gfxScreen->_displayWidth + (mousePos.x)];
+		} else {
+			mousePos.x = g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X[(mousePos.y) * g_sci->_gfxScreen->_displayWidth + (mousePos.x / 2)];
+			mousePos.y = g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y[(mousePos.y) * g_sci->_gfxScreen->_displayWidth + (mousePos.x / 2)];
+		}
+	}
+	if (g_sci->stereoscopic) {
+		if (mousePos.x > _screen->getScriptWidth() / 2) {
+			mousePos.x -= _screen->getScriptWidth() / 2;
+		}
+	}
 	if (_upscaledHires)
 		_screen->adjustBackUpscaledCoordinates(mousePos.y, mousePos.x);
 
@@ -372,7 +794,11 @@ void GfxCursor::refreshPosition() {
 		if (clipped)
 			setPosition(mousePoint);
 	}
-
+	if (g_sci->stereoscopic) {
+		if (mousePoint.x > _screen->getScriptWidth() / 2) {
+			mousePoint.x -= _screen->getScriptWidth() / 2;
+		}
+	}
 	if (_zoomZoneActive) {
 		// Cursor
 		const CelInfo *cursorCelInfo = _zoomCursorView->getCelInfo(_zoomCursorLoop, _zoomCursorCel);
@@ -479,14 +905,28 @@ void GfxCursor::kernelSetZoomZone(byte multiplier, Common::Rect zone, GuiResourc
 
 void GfxCursor::kernelSetPos(Common::Point pos) {
 	_coordAdjuster->setCursorPos(pos);
+	if (g_sci->stereoscopic)
+	if (pos.x > _screen->getScriptWidth() / 2) {
+		pos.x -= _screen->getScriptWidth() / 2;
+	}
 	kernelMoveCursor(pos);
 }
 
 void GfxCursor::kernelMoveCursor(Common::Point pos) {
 	_coordAdjuster->moveCursor(pos);
-	if (pos.x > _screen->getScriptWidth() || pos.y > _screen->getScriptHeight()) {
-		warning("attempt to place cursor at invalid coordinates (%d, %d)", pos.y, pos.x);
-		return;
+	if (!g_sci->stereoscopic) {
+		if (pos.x > _screen->getScriptWidth() || pos.y > _screen->getScriptHeight()) {
+			warning("attempt to place cursor at invalid coordinates (%d, %d)", pos.y, pos.x);
+			return;
+		}
+	} else {
+		if (pos.x > _screen->getScriptWidth() || pos.y > _screen->getScriptHeight()) {
+			warning("attempt to place cursor at invalid coordinates (%d, %d)", pos.y, pos.x);
+			return;
+		}
+		if (pos.x > _screen->getScriptWidth() / 2) {
+			pos.x -= _screen->getScriptWidth() / 2;
+		}
 	}
 
 	setPosition(pos);

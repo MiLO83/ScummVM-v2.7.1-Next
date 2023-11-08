@@ -33,13 +33,29 @@
 #include "sci/engine/state.h"
 #include "sci/sound/midiparser_sci.h"
 #include "sci/sound/music.h"
-
+#include <audio/decoders/wave.h>
+#include <engines/sci/sound/audio.h>
+#include <audio/decoders/mp3.h>
+#include <fstream>
+#include <string>
+#include <iostream>
+#include <list>
+#include <algorithm>
 //#define DEBUG_REMAP
 
 namespace Sci {
-
+extern bool playingVideoCutscenes;
+MidiParser_SCI *midiMusic;
 byte _masterVolumeMIDI = 11;
-
+extern bool playingVideoCutscenes;
+extern bool wasPlayingVideoCutscenes;
+extern std::string videoCutsceneEnd;
+extern std::string videoCutsceneStart;
+extern bool cutscene_mute_midi;
+extern std::list<std::string> extraDIRList;
+extern std::list<std::string>::iterator extraDIRListit;
+extern std::string extraPath;
+int16 prevResourceId;
 SciMusic::SciMusic(SciVersion soundVersion, bool useDigitalSFX)
 	: _mutex(g_system->getMixer()->mutex()), _soundVersion(soundVersion), _soundOn(true), _masterVolume(15), _globalReverb(0), _useDigitalSFX(useDigitalSFX), _needsResume(soundVersion > SCI_VERSION_0_LATE), _globalPause(0) {
 
@@ -55,6 +71,8 @@ SciMusic::SciMusic(SciVersion soundVersion, bool useDigitalSFX)
 	}
 
 	_queuedCommands.reserve(1000);
+
+	isPlayingWav = false;
 }
 
 SciMusic::~SciMusic() {
@@ -197,7 +215,10 @@ void SciMusic::init() {
 
 void SciMusic::miditimerCallback(void *p) {
 	SciMusic *sciMusic = (SciMusic *)p;
-
+	if (g_system->getMixer()->getElapsedTime(sciMusic->_audioHandle).msecs() > sciMusic->musicLoopIn + (sciMusic->musicPlayedLoops * (sciMusic->musicLoopOut - sciMusic->musicLoopIn))) {
+		sciMusic->musicStream->seek(sciMusic->musicLoopIn);
+		sciMusic->musicPlayedLoops++;
+	}
 	Common::StackLock lock(sciMusic->_mutex);
 	sciMusic->onTimer();
 }
@@ -415,7 +436,15 @@ void SciMusic::sortPlayList() {
 	// Sort the play list in descending priority order
 	Common::sort(_playList.begin(), _playList.end(), musicEntryCompare);
 }
-
+bool fileIsInExtraDIRMusic(std::string fileName) {
+	extraDIRListit = std::find(extraDIRList.begin(), extraDIRList.end(), fileName);
+	// Check if iterator points to end or not
+	if (extraDIRListit != extraDIRList.end()) {
+		return true;
+	} else {
+		return false;
+	}
+}
 void SciMusic::soundInitSnd(MusicEntry *pSnd) {
 	// Remove all currently mapped channels of this MusicEntry first,
 	// since they will no longer be valid.
@@ -493,7 +522,7 @@ void SciMusic::soundInitSnd(MusicEntry *pSnd) {
 			}
 
 			pSnd->pauseCounter = 0;
-
+			midiMusic = pSnd->pMidiParser;
 			// Find out what channels to filter for SCI0
 			channelFilterMask = pSnd->soundRes->getChannelFilterMask(_pMidiDrv->getPlayId(), _pMidiDrv->hasRhythmChannel());
 
@@ -655,6 +684,207 @@ void SciMusic::soundPlay(MusicEntry *pSnd, bool restoring) {
 		_currentlyPlayingSample = pSnd;
 	} else {
 		if (pSnd->pMidiParser) {
+			// play MIDI track
+
+			Common::FSNode folder;
+			char musicstrbuffer[32];
+			int retVal, buf_size = 32;
+			retVal = snprintf(musicstrbuffer, buf_size, "music.%u", pSnd->resourceId);
+			Common::String fnStr = musicstrbuffer;
+			if (videoCutsceneEnd == fnStr.c_str()) {
+				playingVideoCutscenes = false;
+				wasPlayingVideoCutscenes = true;
+				videoCutsceneEnd = "-undefined-";
+				videoCutsceneStart = "-undefined-";
+				g_system->getMixer()->muteSoundType(Audio::Mixer::kMusicSoundType, false);
+				g_system->getMixer()->muteSoundType(Audio::Mixer::kSFXSoundType, false);
+				g_system->getMixer()->muteSoundType(Audio::Mixer::kSpeechSoundType, false);
+				Common::String dbg = "Cutscene ENDED on : " + fnStr;
+				debug(dbg.c_str());
+			}
+			if (!extraDIRList.empty() && !wasPlayingVideoCutscenes) {
+				if (fileIsInExtraDIRMusic((fnStr + ".cts").c_str())) {
+					Common::String cfgfileName = fnStr + ".cts";
+					debug(cfgfileName.c_str());
+					Common::SeekableReadStream *cfg = SearchMan.createReadStreamForMember(cfgfileName);
+					if (cfg) {
+						Common::String line, texttmp;
+						cutscene_mute_midi = false;
+						while (!cfg->eos()) {
+							texttmp = cfg->readLine();
+							if (texttmp.firstChar() != '#') {
+								if (texttmp.contains("mute_midi")) {
+									cutscene_mute_midi = true;
+								} else {
+									videoCutsceneEnd = texttmp.c_str();
+								}
+							}
+						}
+						videoCutsceneStart = musicstrbuffer;
+
+						g_sci->oggBackground = fnStr + ".ogg";
+
+						g_sci->_theoraDecoderCutscenes = new Video::TheoraDecoder();
+
+						g_sci->_theoraDecoderCutscenes->loadFile(fnStr + ".ogg");
+						g_sci->_theoraDecoderCutscenes->start();
+						int16 frameTime = g_sci->_theoraDecoderCutscenes->getTimeToNextFrame();
+
+						playingVideoCutscenes = true;
+						wasPlayingVideoCutscenes = true;
+						g_system->getMixer()->muteSoundType(Audio::Mixer::kMusicSoundType, true);
+						g_system->getMixer()->muteSoundType(Audio::Mixer::kSFXSoundType, true);
+						g_system->getMixer()->muteSoundType(Audio::Mixer::kSpeechSoundType, true);
+
+						if (cutscene_mute_midi) {
+							if (midiMusic != NULL)
+								midiMusic->setMasterVolume(0);
+						}
+						Common::String dbg = "Cutscene STARTED on : " + fnStr;
+						debug(dbg.c_str());
+						dbg = "Cutscene set to end on : ";
+						dbg += videoCutsceneEnd.c_str();
+						debug(dbg.c_str());
+					}
+				} else {
+					debug(10, ("NO " + fnStr + ".cts").c_str());
+				}
+			}
+			if (ConfMan.hasKey("extrapath")) {
+				if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists()) {
+					if (folder.getChild((fnStr + ".mp3").c_str()).exists()) {
+						Common::File *sciAudioFile = new Common::File();
+						// Replace backwards slashes
+
+						Common::String fileName = folder.getChild((fnStr + ".mp3").c_str()).getName();
+						for (uint i = 0; i < fileName.size(); i++) {
+							if (fileName[i] == '\\')
+								fileName.setChar('/', i);
+						}
+						sciAudioFile->open(fileName);
+
+						musicStream = nullptr;
+						musicStream = Audio::makeMP3Stream(sciAudioFile, DisposeAfterUse::YES);
+						musicLoopIn = 0;
+						musicLoopOut = musicStream->getLength().msecs();
+						if (musicStream) {
+							debug(("Found : " + fnStr + ".mp3").c_str());
+							std::ifstream openfile;
+							debug("Looking for : %s", (folder.getPath() + folder.getChild((fnStr + ".cfg").c_str()).getName().c_str()).c_str());
+							openfile.open((folder.getPath() + folder.getChild((fnStr + ".cfg").c_str()).getName()).c_str(), std::ios::in);
+							if (openfile.is_open()) {
+
+								std::string tp;
+								std::string text = "";
+								std::string delimiter = "=inMs/outMs=";
+								while (std::getline(openfile, tp)) {
+									size_t pos = 0;
+									std::string token;
+									while ((pos = tp.find(delimiter)) != std::string::npos) {
+										token = tp.substr(0, pos);
+										musicLoopIn = atoi(token.c_str());
+										tp.erase(0, pos + delimiter.length());
+									}
+									musicLoopOut = atoi(tp.c_str());
+								}
+								tp = "";
+								openfile.close();
+							}
+							debug("Music Loop In : %u", musicLoopIn);
+							debug("Music Loop Out : %u", musicLoopOut);
+							Audio::Mixer::SoundType soundType = Audio::Mixer::kMusicSoundType;
+							// We only support one audio handle
+							if (g_system->getMixer() && &_audioHandle != nullptr) {
+								if (isPlayingWav) {
+
+									g_system->getMixer()->stopID(wavID);
+								}
+
+								g_system->getMixer()->playStream(soundType, &_audioHandle, Audio::makeLoopingAudioStream((Audio::SeekableAudioStream *)musicStream, 0), pSnd->resourceId, 127, 0, DisposeAfterUse::YES);
+								musicPlayedLoops = 0;
+								wavID = pSnd->resourceId;
+								muteMidi = true;
+								isPlayingWav = true;
+
+							} else {
+								muteMidi = false;
+							}
+						} else {
+							muteMidi = false;
+						}
+						pSnd->pMidiParser->setMasterVolume(0);
+					} else if (folder.getChild((fnStr + ".wav").c_str()).exists()) {
+						Common::File *sciAudioFile = new Common::File();
+						// Replace backwards slashes
+
+						Common::String fileName = folder.getChild((fnStr + ".wav").c_str()).getName();
+						for (uint i = 0; i < fileName.size(); i++) {
+							if (fileName[i] == '\\')
+								fileName.setChar('/', i);
+						}
+						sciAudioFile->open(fileName);
+
+						musicStream = nullptr;
+						musicStream = Audio::makeWAVStream(sciAudioFile, DisposeAfterUse::YES);
+						musicLoopIn = 0;
+						musicLoopOut = musicStream->getLength().msecs();
+						if (musicStream) {
+							debug(("Found : " + fnStr + ".mp3").c_str());
+							std::ifstream openfile;
+							debug("Looking for : %s", (folder.getPath() + folder.getChild((fnStr + ".cfg").c_str()).getName().c_str()).c_str());
+							openfile.open((folder.getPath() + folder.getChild((fnStr + ".cfg").c_str()).getName()).c_str(), std::ios::in);
+							if (openfile.is_open()) {
+
+								std::string tp;
+								std::string text = "";
+								std::string delimiter = "=inMs/outMs=";
+								while (std::getline(openfile, tp)) {
+									size_t pos = 0;
+									std::string token;
+									while ((pos = tp.find(delimiter)) != std::string::npos) {
+										token = tp.substr(0, pos);
+										musicLoopIn = atoi(token.c_str());
+										tp.erase(0, pos + delimiter.length());
+									}
+									musicLoopOut = atoi(tp.c_str());
+								}
+								tp = "";
+								openfile.close();
+							}
+							debug("Music Loop In : %u", musicLoopIn);
+							debug("Music Loop Out : %u", musicLoopOut);
+							Audio::Mixer::SoundType soundType = Audio::Mixer::kMusicSoundType;
+							// We only support one audio handle
+							if (g_system->getMixer() && &_audioHandle != nullptr) {
+								if (isPlayingWav) {
+
+									g_system->getMixer()->stopID(wavID);
+								}
+
+								g_system->getMixer()->playStream(soundType, &_audioHandle, Audio::makeLoopingAudioStream((Audio::RewindableAudioStream *)musicStream, 0), pSnd->resourceId, 127, 0, DisposeAfterUse::YES);
+								musicPlayedLoops = 0;
+								wavID = pSnd->resourceId;
+								muteMidi = true;
+								isPlayingWav = true;
+								//debug(10, "VOLUME = %d", g_system->getMixer()->getVolumeForSoundType(Audio::Mixer::kMusicSoundType));
+								//g_system->getMixer()->setVolumeForSoundType(Audio::Mixer::kMusicSoundType, 1);
+
+							} else {
+								muteMidi = false;
+							}
+						} else {
+							muteMidi = false;
+						}
+					} else {
+						//debug(("Didn't Find : " + fnStr + ".mp3/.wav").c_str());
+						muteMidi = false;
+					}
+				} else {
+					muteMidi = false;
+				}
+			} else {
+				muteMidi = false;
+			}
 			Common::StackLock lock(_mutex);
 			pSnd->pMidiParser->mainThreadBegin();
 
@@ -778,7 +1008,7 @@ void SciMusic::soundKill(MusicEntry *pSnd) {
 		delete pSnd->pMidiParser;
 		pSnd->pMidiParser = nullptr;
 	}
-
+	g_system->getMixer()->stopAll();
 	_mutex.unlock();
 
 	if (pSnd->isSample) {
@@ -814,6 +1044,7 @@ void SciMusic::soundKill(MusicEntry *pSnd) {
 		}
 	}
 	_mutex.unlock();
+	g_system->getMixer()->stopHandle(_audioHandle);
 }
 
 void SciMusic::soundPause(MusicEntry *pSnd) {
@@ -844,6 +1075,7 @@ void SciMusic::soundPause(MusicEntry *pSnd) {
 			remapChannels();
 		}
 	}
+	g_system->getMixer()->pauseHandle(_audioHandle, true);
 }
 
 void SciMusic::soundResume(MusicEntry *pSnd) {
@@ -860,6 +1092,7 @@ void SciMusic::soundResume(MusicEntry *pSnd) {
 	} else {
 		soundPlay(pSnd, true);
 	}
+	g_system->getMixer()->pauseHandle(_audioHandle, false);
 }
 
 void SciMusic::soundToggle(MusicEntry *pSnd, bool pause) {
@@ -867,18 +1100,23 @@ void SciMusic::soundToggle(MusicEntry *pSnd, bool pause) {
 	if (_soundVersion >= SCI_VERSION_2_1_EARLY && pSnd->isSample) {
 		if (pause) {
 			g_sci->_audio32->pause(ResourceId(kResourceTypeAudio, pSnd->resourceId), pSnd->soundObj);
+			g_system->getMixer()->pauseHandle(_audioHandle, true);
 		} else {
 			g_sci->_audio32->resume(ResourceId(kResourceTypeAudio, pSnd->resourceId), pSnd->soundObj);
+			g_system->getMixer()->pauseHandle(_audioHandle, false);
 		}
 
 		return;
 	}
 #endif
 
-	if (pause)
+	if (pause) {
 		soundPause(pSnd);
-	else
+		g_system->getMixer()->pauseHandle(_audioHandle, true);
+	} else {
 		soundResume(pSnd);
+		g_system->getMixer()->pauseHandle(_audioHandle, false);
+	}
 }
 
 uint16 SciMusic::soundGetMasterVolume() {
@@ -895,7 +1133,7 @@ uint16 SciMusic::soundGetMasterVolume() {
 
 void SciMusic::soundSetMasterVolume(uint16 vol) {
 	_masterVolume = vol;
-
+	_masterVolumeMIDI = _masterVolume;
 	Common::StackLock lock(_mutex);
 
 	const MusicList::iterator end = _playList.end();
@@ -988,7 +1226,7 @@ MusicEntry::MusicEntry() {
 
 	soundRes = nullptr;
 	resourceId = 0;
-
+	isQueued = false;
 	time = 0;
 
 	dataInc = 0;
