@@ -2509,4 +2509,3 @@ reg_t kInPolygon(EngineState *s, int argc, reg_t *argv) {
 #endif
 
 } // End of namespace Sci
-

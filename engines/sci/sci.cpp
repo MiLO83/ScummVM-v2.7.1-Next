@@ -23,12 +23,12 @@
 #include "common/config-manager.h"
 #include "common/debug-channels.h"
 #include "common/translation.h"
-#include "graphics/font.h"
-#include "graphics/fonts/ttf.h"
+
 #include "common/events.h"
 
 #include "engines/advancedDetector.h"
 #include "engines/util.h"
+
 #include <dirent.h>
 
 #include "sci/sci.h"
@@ -84,33 +84,17 @@
 #include "sci/sound/audio32.h"
 #endif
 
-#include <common/events.h>
-#include <image/png.h>
-#include <list>
-#include <algorithm>
-#include <map>
-#include <string>
-
 namespace Sci {
 
-SciEngine *g_sci = 0;
-
-std::map<std::string, std::pair<Graphics::Surface *, const byte *> > viewsMap;
-std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator viewsMapit;
+SciEngine *g_sci = nullptr;
 std::map<int16, std::pair<int16, std::string> > videoCutscenesMap;
 std::map<int16, std::pair<int16, std::string> >::iterator videoCutscenesMapit;
-std::map<std::string, std::pair<Graphics::Surface *, const byte *> > fontsMap;
-std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator fontsMapit;
-std::map<std::string, Graphics::Font *> ttfFontsMap;
-std::map<std::string, Graphics::Font *>::iterator ttfFontsMapit;
 bool playingVideoCutscenes = false;
 bool wasPlayingVideoCutscenes = false;
 std::string videoCutsceneStart = "-undefined-";
 std::string videoCutsceneEnd = "-undefined-";
 bool cutscene_mute_midi = false;
-extern MidiParser_SCI* midiMusic;
-bool preLoadedPNGs = false;
-float blackFade = 1.0;
+MidiParser_SCI* midiMusic;
 
 std::list<std::string> extraDIRList;
 std::list<std::string>::iterator extraDIRListit;
@@ -119,55 +103,7 @@ std::string extraPath = "";
 int cachedFiles;
 float cachedFilesPercent;
 int totalFilesToCache;
-Graphics::Surface *loadCelPNGSci(Common::SeekableReadStream *s) {
-	Image::PNGDecoder d;
 
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
-
-	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-	return srf;
-}
-Graphics::Surface *loadCelPNGCLUTSci(Common::SeekableReadStream *s) {
-	Image::PNGDecoder d;
-
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
-	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8());
-	return srf;
-}
-
-Graphics::Surface *loadCelPNGCLUTOverrideSci(Common::SeekableReadStream *s) {
-	Image::PNGDecoder d;
-
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
-	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8(), d.getPalette());
-
-	for (int16 i = 0; i < 256; i++) {
-		g_sci->_gfxPalette16->_paletteOverride.colors[i].r = d.getPalette()[i * 3];
-		g_sci->_gfxPalette16->_paletteOverride.colors[i].g = d.getPalette()[(i * 3) + 1];
-		g_sci->_gfxPalette16->_paletteOverride.colors[i].b = d.getPalette()[(i * 3) + 2];
-	}
-	g_sci->_gfxPalette16->_sysPalette = g_sci->_gfxPalette16->_paletteOverride;
-	//memcpy((void *)g_sci->_gfxPalette16->_paletteOverride, d.getPalette(), sizeof(d.getPalette()));
-	//_tehScreen->setPalette(d.getPalette(), 0, 256, true);
-	return srf;
-}
-
-bool hasEnding(std::string const &fullString, std::string const &ending) {
-	if (fullString.length() >= ending.length()) {
-		return (0 == fullString.compare(fullString.length() - ending.length(), ending.length(), ending));
-	} else {
-		return false;
-	}
-}
 SciEngine::SciEngine(OSystem *syst, const ADGameDescription *desc, SciGameId gameId) :
 	Engine(syst),
 	_gfxAnimate(nullptr),
@@ -223,40 +159,8 @@ SciEngine::SciEngine(OSystem *syst, const ADGameDescription *desc, SciGameId gam
 
 	assert(g_sci == nullptr);
 	g_sci = this;
-	g_sci->_enhancementMultiplier = 4;
-	Common::FSNode folder = Common::FSNode(ConfMan.get("extrapath"));
-	if (folder.exists() && folder.getChild("1x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 1;
-	}
-	if (folder.exists() && folder.getChild("2x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 2;
-	}
-	if (folder.exists() && folder.getChild("3x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 3;
-	}
-	if (folder.exists() && folder.getChild("4x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 4;
-	}
-	if (folder.exists() && folder.getChild("5x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 5;
-	}
-	if (folder.exists() && folder.getChild("6x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 6;
-	}
-	if (folder.exists() && folder.getChild("7x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 7;
-	}
-	if (folder.exists() && folder.getChild("8x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 8;
-	}
-	if (folder.exists() && folder.getChild("16x.cfg").exists()) {
-		g_sci->_enhancementMultiplier = 16; // lol u get teh idea...
-	}
-	_forceHiresGraphics = false;
-	enhanced = false;
-	enhancedPrio = false;
+
 	const Common::FSNode gameDataDir(ConfMan.get("path"));
-	const Common::FSNode extrapathDir(ConfMan.get("extrapath"));
 
 	SearchMan.addSubDirectoryMatching(gameDataDir, "actors");	// KQ6 hi-res portraits
 	SearchMan.addSubDirectoryMatching(gameDataDir, "aud");	// resource.aud and audio files
@@ -380,17 +284,6 @@ SciEngine::~SciEngine() {
 }
 
 extern int showScummVMDialog(const Common::U32String &message, const Common::U32String &altButton = Common::U32String(), bool alignCenter = true);
-Graphics::Surface *loadCelPNGEngine(Common::SeekableReadStream *s) {
-	Image::PNGDecoder d;
-
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
-
-	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-	return srf;
-}
 
 Common::Error SciEngine::run() {
 	_tts = new SciTTS();
@@ -442,18 +335,7 @@ Common::Error SciEngine::run() {
 		// Default to using hires Mac fonts if GUI option isn't present, as it was added later.
 		_forceHiresGraphics = true;
 	}
-	if (Common::checkGameGUIOption(GAMEOPTION_STEREOSCOPIC, ConfMan.get("guioptions"))) {
-		stereoscopic = ((ConfMan.getInt("stereoscopic_rendering") != kStereoscopicModeOff) && (ConfMan.getInt("stereoscopic_rendering") != kStereoscopicMode2DDepth));
-	}
-	if (Common::checkGameGUIOption(GAMEOPTION_STEREOSCOPIC, ConfMan.get("guioptions"))) {
-		depth_rendering = ((ConfMan.getInt("stereoscopic_rendering") == kStereoscopicModeDepth) || (ConfMan.getInt("stereoscopic_rendering") == kStereoscopicMode2DDepth));
-	}
-	if (Common::checkGameGUIOption(GAMEOPTION_STEREOSCOPIC, ConfMan.get("guioptions"))) {
-		stereo_pair_rendering = (ConfMan.getInt("stereoscopic_rendering") == kStereoscopicModePair);
-	}
-	if (Common::checkGameGUIOption(GAMEOPTION_ENHANCE_GFX, ConfMan.get("guioptions"))) {
-		enhanced_gfx_enabled = (ConfMan.getBool("enhanced_gfx_enabled"));
-	}
+
 	if (getSciVersion() < SCI_VERSION_2) {
 		// Initialize the game screen
 		_gfxScreen = new GfxScreen(_resMan);
@@ -589,50 +471,31 @@ Common::Error SciEngine::run() {
 	}
 
 	extraPath = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
-	preLoadedPNGs = false;
 	extraDIRList.clear();
 	CreateDIRListing();
-	viewsMap.clear();
-	_gfxAnimate->LoadAllExtraPNG();
-	fontsMap.clear();
-	ttfFontsMap.clear();
 	videoCutscenesMap.clear();
 	playingVideoCutscenes = false;
 	videoCutsceneStart = "-undefined-";
 	videoCutsceneEnd = "-undefined-";
-	blackFade = 1.0;
 	runTheoraIntro();
 	runGame();
 	runTheoraOutro();
 	extraDIRList.clear();
-	viewsMap.clear();
-	fontsMap.clear();
-	ttfFontsMap.clear();
 	videoCutscenesMap.clear();
 	playingVideoCutscenes = false;
 	videoCutsceneStart = "-undefined-";
 	videoCutsceneEnd = "-undefined-";
-	preLoadedPNGs = false;
-	blackFade = 1.0;
 	ConfMan.flushToDisk();
 
 	return Common::kNoError;
 }
 
 void SciEngine::CreateDIRListing() {
-	g_sci->totalFilesToCache = 0;
-	Common::String loadname = "loading.0.percent.png";
-	Common::String fnload = Common::FSNode(ConfMan.get("extrapath")).getChild(loadname).getName();
-	Common::SeekableReadStream *fileload = SearchMan.createReadStreamForMember(Common::FSNode(ConfMan.get("extrapath")).getChild(fnload).getName());
-	if (fileload) {
-		Graphics::Surface *viewpngloadtmp = loadCelPNGEngine(fileload);
-		g_system->copyRectToScreen(viewpngloadtmp->getPixels(), viewpngloadtmp->w * 4, 0, 0, viewpngloadtmp->w, viewpngloadtmp->h);
-		g_system->updateScreen();
-	}
+	
 	std::string directory = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
 
-	DIR *dir;
-	class dirent *ent;
+	DIR* dir;
+	class dirent* ent;
 	//class stat st;
 
 	dir = opendir(directory.c_str());
@@ -640,19 +503,6 @@ void SciEngine::CreateDIRListing() {
 		const std::string file_name = ent->d_name;
 		const std::string full_file_name = directory + "/" + file_name;
 
-		//if (file_name[0] == '.')
-		//continue;
-
-		//if (stat(full_file_name.c_str(), &st) == -1)
-		//continue;
-
-		//const bool is_directory = (st.st_mode & S_IFDIR) != 0;
-
-		//if (is_directory)
-		//continue;
-		if (strstr(file_name.c_str(), ".png") && (strstr(file_name.c_str(), "pic") || strstr(file_name.c_str(), "view")) && !strstr(file_name.c_str(), "_256") && !strstr(file_name.c_str(), "_256RP")) {
-			g_sci->totalFilesToCache++;
-		}
 		std::string path = file_name;
 		extraDIRList.push_back(path);
 	}
@@ -798,7 +648,8 @@ void SciEngine::suggestDownloadGK2SubTitlesPatch() {
 	if (g_system->hasFeature(OSystem::kFeatureOpenUrl)) {
 		altButton = _("Download patch");
 		downloadMessage = _("(or click 'Download patch' button. But note - it only downloads, you will have to continue from there)\n");
-	} else {
+	}
+	else {
 		altButton = "";
 		downloadMessage = "";
 	}
@@ -915,7 +766,7 @@ void SciEngine::initGraphics() {
 		_gfxTransitions = new GfxTransitions(_gfxScreen, _gfxPalette16);
 		_gfxPaint16 = new GfxPaint16(_resMan, _gamestate->_segMan, _gfxCache, _gfxPorts, _gfxCoordAdjuster, _gfxScreen, _gfxPalette16, _gfxTransitions, _audio);
 		_gfxAnimate = new GfxAnimate(_gamestate, _scriptPatcher, _gfxCache, _gfxPorts, _gfxPaint16, _gfxScreen, _gfxPalette16, _gfxCursor, _gfxTransitions);
-		_gfxText16 = new GfxText16(_gfxCache, _gfxPorts, _gfxPaint16, _gfxScreen);
+		_gfxText16 = new GfxText16(_gfxCache, _gfxPorts, _gfxPaint16, _gfxScreen, _gfxMacFontManager);
 		_gfxControls16 = new GfxControls16(_gamestate->_segMan, _gfxPorts, _gfxPaint16, _gfxText16, _gfxScreen);
 		_gfxMenu = new GfxMenu(_eventMan, _gamestate->_segMan, _gfxPorts, _gfxPaint16, _gfxText16, _gfxScreen, _gfxCursor);
 

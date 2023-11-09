@@ -54,13 +54,7 @@
 #ifdef ENABLE_SCI32
 #include "sci/graphics/text32.h"
 #endif
-#include <common/config-manager.h>
-#include <audio/audiostream.h>
-#include <sci/sound/audio.h>
-#include <sci/sound/music.h>
-#include <iostream>
-#include <fstream>
-#include <string>
+
 namespace Sci {
 
 static int16 adjustGraphColor(int16 color) {
@@ -272,13 +266,6 @@ reg_t kGraphDrawLine(EngineState *s, int argc, reg_t *argv) {
 	int16 control = (argc > 6) ? argv[6].toSint16() : -1;
 
 	g_sci->_gfxPaint16->kernelGraphDrawLine(getGraphPoint(argv), getGraphPoint(argv + 2), color, priority, control);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-		
-			g_sci->_gfxPaint16->kernelGraphDrawLine(getGraphPoint(argv), getGraphPoint(argv + 2), color, priority, control);
-			g_sci->stereoRightEye = false;
-		
-	}
 	return s->r_acc;
 }
 
@@ -291,39 +278,18 @@ reg_t kGraphSaveBox(EngineState *s, int argc, reg_t *argv) {
 reg_t kGraphRestoreBox(EngineState *s, int argc, reg_t *argv) {
 	// This may be called with a memoryhandle from SAVE_BOX or SAVE_UPSCALEDHIRES_BOX
 	g_sci->_gfxPaint16->kernelGraphRestoreBox(argv[0]);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-
-			g_sci->_gfxPaint16->kernelGraphRestoreBox(argv[0]);
-			g_sci->stereoRightEye = false;
-		
-	}
 	return s->r_acc;
 }
 
 reg_t kGraphFillBoxBackground(EngineState *s, int argc, reg_t *argv) {
 	Common::Rect rect = getGraphRect(argv);
 	g_sci->_gfxPaint16->kernelGraphFillBoxBackground(rect);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-
-			g_sci->_gfxPaint16->kernelGraphFillBoxBackground(rect);
-			g_sci->stereoRightEye = false;
-		
-	}
 	return s->r_acc;
 }
 
 reg_t kGraphFillBoxForeground(EngineState *s, int argc, reg_t *argv) {
 	Common::Rect rect = getGraphRect(argv);
 	g_sci->_gfxPaint16->kernelGraphFillBoxForeground(rect);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-
-			g_sci->_gfxPaint16->kernelGraphFillBoxForeground(rect);
-			g_sci->stereoRightEye = false;
-		
-	}
 	return s->r_acc;
 }
 
@@ -335,13 +301,6 @@ reg_t kGraphFillBoxAny(EngineState *s, int argc, reg_t *argv) {
 	int16 control = argv[7].toSint16(); // sierra did the same
 
 	g_sci->_gfxPaint16->kernelGraphFillBox(rect, colorMask, color, priority, control);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-		
-			g_sci->_gfxPaint16->kernelGraphFillBox(rect, colorMask, color, priority, control);
-			g_sci->stereoRightEye = false;
-		
-	}
 	return s->r_acc;
 }
 
@@ -351,12 +310,6 @@ reg_t kGraphUpdateBox(EngineState *s, int argc, reg_t *argv) {
 	// argc == 6 on upscaled hires
 	bool hiresMode = (argc > 5) ? true : false;
 	g_sci->_gfxPaint16->kernelGraphUpdateBox(rect, hiresMode);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-			g_sci->_gfxPaint16->kernelGraphUpdateBox(rect, hiresMode);
-			g_sci->stereoRightEye = false;
-		
-	}
 	return s->r_acc;
 }
 
@@ -377,50 +330,9 @@ reg_t kGraphSaveUpscaledHiresBox(EngineState *s, int argc, reg_t *argv) {
 	return g_sci->_gfxPaint16->kernelGraphSaveUpscaledHiresBox(rect);
 }
 
-unsigned long
-hash(const char *str) {
-	unsigned long hash = 5381;
-	int c;
-
-	while (c = *str++)
-		hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-
-	return hash;
-}
-
 reg_t kTextSize(EngineState *s, int argc, reg_t *argv) {
-	int16 textWidth, textHeight;
 	reg_t *dest = s->_segMan->derefRegPtr(argv[0], 4);
 	Common::String text = s->_segMan->getString(argv[1]);
-	char trimmedTextStr[250] = {'\0'};
-	sprintf(trimmedTextStr, "%d", hash(text.c_str()));
-	Common::FSNode folder = Common::FSNode(ConfMan.get("extrapath"));
-	Common::String txtFileName = "text.";
-	txtFileName += trimmedTextStr;
-	txtFileName += ".txt";
-	debug(txtFileName.c_str());
-	bool replaceText = false;
-	if (folder.exists()) {
-		if (folder.getChild(txtFileName).exists()) {
-			Common::String fileName = (folder.getPath() + folder.getChild(txtFileName).getName()).c_str();
-			debug((fileName).c_str());
-			std::ifstream openfile;
-			openfile.open(fileName.c_str(), std::ios::in);
-			if (openfile.is_open()) {
-				std::string tp;
-				text = "";
-				while (std::getline(openfile, tp)) {
-					std::cout << tp;
-					tp += "\n";
-					text += tp.c_str();
-				}		
-				tp = "";
-				openfile.close();
-				replaceText = true;
-			}
-		}
-	}
-	g_sci->_audio->PlayEnhancedTextAudio(trimmedTextStr, text);
 	int font = argv[2].toUint16();
 	int maxWidth = (argc > 3) ? argv[3].toUint16() : 0;
 
@@ -449,6 +361,8 @@ reg_t kTextSize(EngineState *s, int argc, reg_t *argv) {
 	uint16 languageSplitter = 0;
 	Common::String splitText = g_sci->strSplitLanguage(text.c_str(), &languageSplitter, separator);
 
+	int16 textWidth;
+	int16 textHeight;
 	const bool useMacFonts = g_sci->hasMacFonts() && (argc < 6);
 	if (!useMacFonts) {
 		g_sci->_gfxText16->kernelTextSize(splitText.c_str(), languageSplitter, font, maxWidth, &textWidth, &textHeight);
@@ -668,17 +582,8 @@ reg_t kDrawPic(EngineState *s, int argc, reg_t *argv) {
 	}
 	if (argc >= 4)
 		EGApaletteNo = argv[3].toUint16();
-	if (!g_sci->stereoscopic || g_sci->depth_rendering) {
-		g_sci->_gfxPaint16->kernelDrawPicture(pictureId, animationNr, animationBlackoutFlag, mirroredFlag, addToFlag, EGApaletteNo);
 
-	} else {
-			g_sci->stereoRightEye = false;
-			g_sci->_gfxPaint16->kernelDrawPicture(pictureId, animationNr, animationBlackoutFlag, mirroredFlag, addToFlag, EGApaletteNo);
-			g_sci->stereoRightEye = true;
-			g_sci->_gfxPaint16->kernelDrawPicture(pictureId, animationNr, animationBlackoutFlag, mirroredFlag, addToFlag, EGApaletteNo);
-			g_sci->stereoRightEye = false;
-		
-	}
+	g_sci->_gfxPaint16->kernelDrawPicture(pictureId, animationNr, animationBlackoutFlag, mirroredFlag, addToFlag, EGApaletteNo);
 
 	return s->r_acc;
 }
@@ -995,32 +900,6 @@ void _k_GenericDrawControl(EngineState *s, reg_t controlObject, bool hilite) {
 	if (!textReference.isNull())
 		text = s->_segMan->getString(textReference);
 
-	char trimmedTextStr[250] = {'\0'};
-	sprintf(trimmedTextStr, "%d", hash(text.c_str()));
-	Common::FSNode folder = Common::FSNode(ConfMan.get("extrapath"));
-	Common::String txtFileName = "text.";
-	txtFileName += trimmedTextStr;
-	txtFileName += ".txt";
-	debug(txtFileName.c_str());
-	bool replaceText = false;
-	if (folder.exists()) {
-		if (folder.getChild(txtFileName).exists()) {
-			Common::String fileName = (folder.getPath() + folder.getChild(txtFileName).getName()).c_str();
-			debug((fileName).c_str());
-			std::ifstream openfile;
-			openfile.open(fileName.c_str(), std::ios::in);
-			if (openfile.is_open()) {
-				std::string tp;
-				text = "";
-				while (std::getline(openfile, tp)) {
-					std::cout << tp;
-					tp += "\n";
-					text += tp.c_str();
-				}
-				tp = "";
-			}
-		}
-	}
 	uint16 languageSplitter = 0;
 	Common::String splitText;
 
@@ -1178,13 +1057,8 @@ reg_t kDrawControl(EngineState *s, int argc, reg_t *argv) {
 		// For the SCI32 version of this, check kListAt().
 		s->_chosenQfGImportItem = readSelectorValue(s->_segMan, controlObject, SELECTOR(mark));
 	}
+
 	_k_GenericDrawControl(s, controlObject, false);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-		_k_GenericDrawControl(s, controlObject, false);
-		g_sci->stereoRightEye = false;
-		
-	}
 	return s->r_acc;
 }
 
@@ -1309,12 +1183,7 @@ reg_t kDrawCel(EngineState *s, int argc, reg_t *argv) {
 	}
 
 	g_sci->_gfxPaint16->kernelDrawCel(viewId, loopNo, celNo, x, y, priority, paletteNo, scaleX, scaleY, hiresMode, upscaledHiresHandle);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-		g_sci->_gfxPaint16->kernelDrawCel(viewId, loopNo, celNo, x, y, priority, paletteNo, scaleX, scaleY, hiresMode, upscaledHiresHandle);
-		g_sci->stereoRightEye = false;
-		
-	}
+
 	return s->r_acc;
 }
 
@@ -1356,11 +1225,7 @@ reg_t kAnimate(EngineState *s, int argc, reg_t *argv) {
 	bool cycle = (argc > 1) ? ((argv[1].toUint16()) ? true : false) : false;
 
 	g_sci->_gfxAnimate->kernelAnimate(castListReference, cycle, argc, argv);
-	if (g_sci->stereoscopic) {
-		g_sci->stereoRightEye = true;
-		g_sci->_gfxAnimate->kernelAnimate(castListReference, cycle, argc, argv);
-		g_sci->stereoRightEye = false;
-	}
+
 	// WORKAROUND: At the end of Ecoquest 1, during the credits, the game
 	// doesn't call kGetEvent(), so no events are processed (e.g. window
 	// focusing, window moving etc). We poll events for that scene, to

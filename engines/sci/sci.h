@@ -35,9 +35,6 @@
 #include <string>
 #include <list>
 
-#include <engines/sci/graphics/helpers.h>
-
-
 struct ADGameDescription;
 
 /**
@@ -144,8 +141,6 @@ enum kLanguage {
 class SciEngine : public Engine {
 	friend class Console;
 public:
-	void LoadAllExtraPNG();
-
 	SciEngine(OSystem *syst, const ADGameDescription *desc, SciGameId gameId);
 	~SciEngine() override;
 	void CreateDIRListing();
@@ -259,45 +254,8 @@ public:
 	bool checkSelectorBreakpoint(BreakpointType breakpointType, reg_t send_obj, int selector);
 	bool checkAddressBreakpoint(const reg_t &address);
 
-	bool stereoscopic = false;
-	bool stereo_pair_rendering = false;
-	bool depth_rendering = false;
-	int stereoSeparation = 30; // unused.
-	bool stereoRightEye = false;
-	bool shakeyCam = false;
-	int _enhancementMultiplier;
-	int _enhancementMultiplierView;
 	const Graphics::Surface *_theoraSurface;
 	Common::String oggBackground;
-	bool enhanced_gfx_enabled = true;
-	bool enhanced;
-	bool enhancedPrio;
-	bool backgroundIsVideo = false;
-	bool enhanced_BG = false;
-	bool paletted_enhanced_BG = false;
-	bool enhanced_PRIORITY = false;
-	bool enhanced_DEPTH = false;
-	int16 enhanced_bg_frame = 1;
-	bool play_enhanced_BG_anim = false;
-	bool scene_transition = false;
-	GuiResourceId pictureId = NULL;
-	GuiResourceId prevPictureId = NULL;
-	GuiResourceId prevPictureIdWork = NULL;
-	std::string prevPicName = "";
-	bool prevMirroredFlag;
-	bool prevAddToFlag;
-	int16 prevPaletteId;
-	reg_t bitsHandleMenu;
-	bool dontUpdate = false;
-	reg_t menuSaveBits;
-	reg_t statusSaveBits;
-	Common::Point mouseLookPos;
-	Common::Point viewLookPos;
-	Common::Point viewLookPosPrevious;
-	std::list<Common::Point> avgViewPos;
-	int cachedFiles;
-	float cachedFilesPercent;
-	int totalFilesToCache;
 
 public:
 	bool checkKernelBreakpoint(const Common::String &name);

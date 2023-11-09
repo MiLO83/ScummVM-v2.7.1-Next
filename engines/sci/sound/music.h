@@ -83,8 +83,6 @@ public:
 
 	int time; // "tim"estamp to indicate in which order songs have been added
 
-	bool isQueued; // for SCI0 only!
-
 	uint16 dataInc;
 	uint16 ticker;
 	uint16 signal;

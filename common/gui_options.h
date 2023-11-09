@@ -102,8 +102,6 @@
 #define GUIO_GAMEOPTIONS30   "\x4d"
 #define GUIO_GAMEOPTIONS31   "\x4e"
 #define GUIO_GAMEOPTIONS32   "\x4f"
-#define GUIO_GAMEOPTIONS18	 "\x50"
-#define GUI0_GAMEOPTIONS19	 "\x51"
 
 #define GUIO0() (GUIO_NONE)
 #define GUIO1(a) (a)

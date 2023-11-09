@@ -24,10 +24,6 @@
 #include "sci/graphics/screen.h"
 #include "sci/graphics/scifont.h"
 
-#include <common/config-manager.h>
-#include <image/png.h>
-#include <map>
-#include <iostream>
 namespace Sci {
 
 #ifdef ENABLE_SCI32
@@ -188,35 +184,12 @@ static const byte sci32SystemFont[] = {
 };
 #endif
 
-
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> > fontsMap;
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator fontsMapit;
-extern std::map<std::string, Graphics::Font *> ttfFontsMap;
-extern std::map<std::string, Graphics::Font *>::iterator ttfFontsMapit;
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> > viewsMap;
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator viewsMapit;
-extern bool preLoadedPNGs;
-
-int roundUp(int numToRound, int multiple) {
-	if (multiple == 0)
-		return numToRound;
-
-	int remainder = numToRound % multiple;
-	if (remainder == 0)
-		return numToRound;
-
-	return numToRound + multiple - remainder;
-}
-
 GfxFontFromResource::GfxFontFromResource(ResourceManager *resMan, GfxScreen *screen, GuiResourceId resourceId)
 	: _resourceId(resourceId), _screen(screen), _resMan(resMan) {
 	if (getSciVersion() < SCI_VERSION_2) {
 		assert(resourceId != -1);
 	}
 
-	bool enhancedFont = false;
-	bool enhancedFontTTF = false;
-	Graphics::Font* ttffonttmp = nullptr;
 #ifdef ENABLE_SCI32
 	if (getSciVersion() >= SCI_VERSION_2 && resourceId == kSci32SystemFont) {
 		_resource = nullptr;
@@ -233,36 +206,6 @@ GfxFontFromResource::GfxFontFromResource(ResourceManager *resMan, GfxScreen *scr
 			error("font resource %d not found", resourceId);
 		}
 		_resourceData = *_resource;
-		for (ttfFontsMapit = ttfFontsMap.begin();
-		     ttfFontsMapit != ttfFontsMap.end(); ++ttfFontsMapit) {
-
-			if (strcmp(ttfFontsMapit->first.c_str(), (_resource->name() + ".ttf").c_str()) == 0) {
-
-				ttffonttmp = ttfFontsMapit->second;
-				enhancedFont = true;
-				enhancedFontTTF = true;
-			}
-		}
-		if (!enhancedFontTTF) {
-		
-		Common::FSNode folder = Common::FSNode(ConfMan.get("extrapath"));
-		if (folder.exists() && folder.getChild(_resource->name() + ".ttf").exists()) {
-			Common::String fileName = folder.getChild(_resource->name() + ".ttf").getName();
-			Common::SeekableReadStream *ffile = SearchMan.createReadStreamForMember(fileName);
-			if (!ffile) {
-				//debug(10, "Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-			} else {
-				//debug(10, "Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-
-				ttffonttmp = Graphics::loadTTFFont(*ffile, (_resourceData.getUint16SE32At(4)) * g_sci->_enhancementMultiplier * 0.75);
-				if (ttffonttmp != NULL) {
-					enhancedFont = true;
-					enhancedFontTTF = true;
-					ttfFontsMap.insert(std::pair<std::string, Graphics::Font *>((_resource->name() + ".ttf").c_str(), ttffonttmp));
-				}
-			}
-			}
-		}
 #ifdef ENABLE_SCI32
 	}
 #endif
@@ -274,9 +217,7 @@ GfxFontFromResource::GfxFontFromResource(ResourceManager *resMan, GfxScreen *scr
 		_numChars = _resourceData.getUint16LEAt(2);
 		_fontHeight = _resourceData.getUint16LEAt(4);
 	}
-	int16 _numCharsTTF = _numChars * 8;
-	_chars = new Charinfo[_numChars * 8];
-	_charsTTF = new Charinfo[_numCharsTTF];
+	_chars = new Charinfo[_numChars];
 	// filling info for every char
 	for (int16 i = 0; i < _numChars; i++) {
 		uint32 charOffsetIndex = 6 + i * 2;
@@ -287,21 +228,6 @@ GfxFontFromResource::GfxFontFromResource(ResourceManager *resMan, GfxScreen *scr
 		}
 		_chars[i].width = _resourceData.getUint8At(_chars[i].offset);
 		_chars[i].height = _resourceData.getUint8At(_chars[i].offset + 1);
-	}
-	if (enhancedFontTTF) {
-		_fontHeight = roundUp(ttffonttmp->getFontHeight(), g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier;
-		for (int16 i = 0; i < _numCharsTTF; i++) {
-			//if (ttffonttmp->getCharWidth(i))
-			{
-				if ((i >= '0' && i <= '9') || (i >= 'a' && i <= 'z') || (i >= 'A' && i <= 'Z'))
-				{
-
-						_chars[i].width = (ttffonttmp->getCharWidth(i) / g_sci->_enhancementMultiplier) + 2;
-						_chars[i].height = roundUp(ttffonttmp->getFontHeight(), g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier;
-					
-				}
-			}
-		}
 	}
 }
 
@@ -338,19 +264,7 @@ SciSpan<const byte> GfxFontFromResource::getCharData(uint16 chr) {
 	return _resourceData.subspan(_chars[chr].offset + 2, charDataSize);
 }
 
-Graphics::Surface *loadFontPNG(Common::SeekableReadStream *s) {
-	Image::PNGDecoder d;
-
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
-
-	Graphics::Surface *srf = d.getSurface()->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-	return srf;
-}
-
- void GfxFontFromResource::draw(uint16 chr, int16 top, int16 left, byte color, bool greyedOutput) {
+void GfxFontFromResource::draw(uint16 chr, int16 top, int16 left, byte color, bool greyedOutput) {
 	if (chr >= _numChars) {
 		// SSCI silently ignores attempts to draw characters that do not exist
 		// in the font; for now, emit warnings if this happens, to learn if
@@ -361,190 +275,22 @@ Graphics::Surface *loadFontPNG(Common::SeekableReadStream *s) {
 
 	// Make sure we're comparing against the correct dimensions
 	// If the font we're drawing is already upscaled, make sure we use the full screen width/height
-	uint16 screenWidth = _screen->fontIsUpscaled() ? _screen->getDisplayWidth() : _screen->getWidth() * g_sci->_enhancementMultiplier;
-	uint16 screenHeight = _screen->fontIsUpscaled() ? _screen->getDisplayHeight() : _screen->getHeight() * g_sci->_enhancementMultiplier;
+	uint16 screenWidth = _screen->fontIsUpscaled() ? _screen->getDisplayWidth() : _screen->getWidth();
+	uint16 screenHeight = _screen->fontIsUpscaled() ? _screen->getDisplayHeight() : _screen->getHeight();
 
 	int charWidth = getCharWidth(chr);
 	int charHeight = getCharHeight(chr);
 	byte b = 0, mask = 0xFF;
 	int16 greyedTop = top;
 
-	bool enhancedFont = false;
-	bool enhancedFontTTF = false;
-	int pixelsLength = 0;
-
-	Common::FSNode folder;
-	char charNoStr[5];
-	sprintf(charNoStr, "%u", chr);
-	//char mapStr[7];
-	//sprintf(mapStr, "%u", fontsMap.size());
-	//debug(mapStr);
-	
-	std::string search = _resource->name().c_str();
-	search += ".";
-	search += charNoStr;
-	search += ".png";
-	pngfont = NULL;
-	Graphics::Font *ttffonttmp = nullptr;
-	for (fontsMapit = fontsMap.begin();
-	     fontsMapit != fontsMap.end(); ++fontsMapit) {
-
-		if (strcmp(fontsMapit->first.c_str(), search.c_str()) == 0) {
-
-
-				//debug(fontsMapit->first.c_str());
-				std::pair<Graphics::Surface *, const byte *> tmp = fontsMapit->second;
-				pngfont = tmp.first;
-				if (pngfont != NULL) {
-					enhfont = tmp.second;
-					if (enhfont) {
-
-						pixelsLength = pngfont->w * pngfont->h * 4;
-
-						//_chars[chr].width = pngfont->w;
-						//_chars[chr].height = pngfont->h;
-						enhancedFont = true;
-						enhancedFontTTF = false;
-					}
-				}
-			
-		}
-	}
-	if (!enhancedFont) {
-
-		for (ttfFontsMapit = ttfFontsMap.begin();
-		     ttfFontsMapit != ttfFontsMap.end(); ++ttfFontsMapit) {
-
-			if (strcmp(ttfFontsMapit->first.c_str(), (_resource->name() + ".ttf").c_str()) == 0) {
-
-				ttffonttmp = ttfFontsMapit->second;
-				enhancedFont = true;
-				enhancedFontTTF = true;
-				Graphics::Surface *chrSurf = new Graphics::Surface();
-				chrSurf->create(_chars[chr].width * g_sci->_enhancementMultiplier, _chars[chr].height * g_sci->_enhancementMultiplier, Graphics::PixelFormat::createFormatCLUT8());
-				Common::String s = "";
-				s += chr;
-				ttffonttmp->drawString(chrSurf, s, 0, 0, _chars[chr].width * g_sci->_enhancementMultiplier, 255, Graphics::kTextAlignCenter);
-				enhfont = (const byte *)chrSurf->getPixels();
-			}
-		}
-		if (!enhancedFontTTF) {
-			if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(_resource->name() + ".ttf").exists()) {
-				Common::String fileName = folder.getChild(_resource->name() + ".ttf").getName();
-				Common::SeekableReadStream *fnfile = SearchMan.createReadStreamForMember(fileName);
-				if (!fnfile) {
-					//debug(10, "Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-				} else {
-					//debug(10, "Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-					if (ttffonttmp == NULL)
-						ttffonttmp = Graphics::loadTTFFont(*fnfile, getCharHeight(chr) * g_sci->_enhancementMultiplier * 0.75);
-					if (ttffonttmp != NULL) {
-						enhancedFont = true;
-						enhancedFontTTF = true;
-						ttfFontsMap.insert(std::pair<std::string, Graphics::Font *>((_resource->name() + ".ttf").c_str(), ttffonttmp));
-						//charWidth = ttffonttmp->getCharWidth(chr) / g_sci->_enhancementMultiplier;
-						//charHeight = ttffonttmp->getFontHeight() / g_sci->_enhancementMultiplier;
-						Graphics::Surface *chrSurf = new Graphics::Surface();
-						chrSurf->create(_chars[chr].width * g_sci->_enhancementMultiplier, _chars[chr].height * g_sci->_enhancementMultiplier, Graphics::PixelFormat::createFormatCLUT8());
-						Common::String s = "";
-						s += chr;
-						ttffonttmp->drawString(chrSurf, s, 0, 0, _chars[chr].width * g_sci->_enhancementMultiplier, 255, Graphics::kTextAlignCenter);
-						enhfont = (const byte *)chrSurf->getPixels();
-						std::pair<Graphics::Surface *, const byte *> tmp;
-						tmp.first = NULL;
-						tmp.second = enhfont;
-						fontsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((_resource->name() + '.' + charNoStr + ".png").c_str(), tmp));
-					}
-				}
-			} else {
-				//debug(("DIDN'T FIND " + _resource->name() + ".ttf").c_str());
-			}
-		}
-	}
-		//debug("RELOADED FROM RAM");
-
-		
-			if (enhancedFontTTF) {
-				//charWidth = ttffonttmp->getCharWidth(chr) / g_sci->_enhancementMultiplier;
-				//charHeight = ttffonttmp->getFontHeight() / g_sci->_enhancementMultiplier;
-				Graphics::Surface *chrSurf = new Graphics::Surface();
-				chrSurf->create(_chars[chr].width * g_sci->_enhancementMultiplier, _chars[chr].height * g_sci->_enhancementMultiplier, Graphics::PixelFormat::createFormatCLUT8());
-				Common::String s = "";
-				s += chr;
-				ttffonttmp->drawString(chrSurf, s, 0, 0, _chars[chr].width * g_sci->_enhancementMultiplier, 255, Graphics::kTextAlignCenter);
-				enhfont = (const byte *)chrSurf->getPixels();
-				std::pair<Graphics::Surface *, const byte *> tmp;
-				tmp.first = NULL;
-				tmp.second = enhfont;
-				fontsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((_resource->name() + '.' + charNoStr + ".png").c_str(), tmp));
-				enhancedFont = true;
-			}
-		
-
-		if (enhancedFont && !enhancedFontTTF) {
-			
-				//_fontHeight = pngfont->h / g_sci->_enhancementMultiplier;
-				_chars[chr].width = (pngfont->w / g_sci->_enhancementMultiplier);
-				_chars[chr].height = pngfont->h / g_sci->_enhancementMultiplier;
-			
-		}
-
-		if (!pngfont) {
-			if (!enhancedFontTTF) {
-
-				if (ConfMan.hasKey("extrapath")) {
-					if ((folder = Common::FSNode(ConfMan.get("extrapath"))).exists() && folder.getChild(_resource->name() + '.' + charNoStr + ".png").exists()) {
-						Common::String fileName = folder.getChild(_resource->name() + '.' + charNoStr + ".png").getName();
-						Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-						if (!file) {
-							//debug(10, "Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-						} else {
-							//debug(10, "Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-							Graphics::Surface *pngfonttmp = loadFontPNG(file);
-							if (pngfonttmp) {
-								enhfont = (const byte *)pngfonttmp->getPixels();
-								if (enhfont) {
-									std::pair<Graphics::Surface *, const byte *> tmp;
-									tmp.first = pngfonttmp;
-									tmp.second = enhfont;
-									pixelsLength = pngfonttmp->w * pngfonttmp->h * 4;
-									enhancedFont = true;
-
-									fontsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >(fileName.c_str(), tmp));
-
-									pngfont = pngfonttmp;
-									//debug(fileName.c_str());
-									//debug("LOADED FROM DISC");
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		/*
-	if (greyedOutput)
-	debug(10, "%d", (color));
-	
-	bool invert = false;
 	SciSpan<const byte> charData = getCharData(chr);
-	bool exportFontToPNG = false;
-	Common::String exportFileName;
-
 	for (int y = 0; y < charHeight; y++) {
 		if (greyedOutput)
 			mask = ((greyedTop++) % 2) ? 0xAA : 0x55;
 		for (int x = 0; x < charWidth; x++) {
-			byte bd = 0;
-			if ((x & 7) == 0) { // fetching next data byte
-				bd = *(charData++);
-				b = bd & mask;
-				
-			}
-			
-			
+			if ((x & 7) == 0) // fetching next data byte
+				b = *(charData++) & mask;
 			if (b & 0x80) { // if MSB is set - paint it
-				debug(10, "%d", (x));
 				int screenX = left + x;
 				int screenY = top + y;
 				if (0 <= screenX && screenX < screenWidth && 0 <= screenY && screenY < screenHeight) {
@@ -556,97 +302,7 @@ Graphics::Surface *loadFontPNG(Common::SeekableReadStream *s) {
 			b = b << 1;
 		}
 	}
-	*/
-		if (!enhancedFont) {
-			SciSpan<const byte> charData = getCharData(chr);
-			bool exportFontToPNG = false;
-			Common::String exportFileName;
-
-			for (int y = 0; y < charHeight; y++) {
-				if (greyedOutput)
-					mask = ((greyedTop++) % 2) ? 0xAA : 0x55;
-				for (int x = 0; x < charWidth; x++) {
-					if ((x & 7) == 0) // fetching next data byte
-						b = *(charData++) & mask;
-					if (b & 0x80) { // if MSB is set - paint it
-						int screenX = left + x;
-						int screenY = top + y;
-						if (0 <= screenX && screenX < screenWidth && 0 <= screenY && screenY < screenHeight) {
-							_screen->putFontPixel(top, screenX, y, color);
-						} else {
-							warning("%s glpyh %d drawn out of bounds: %d, %d", _resource->name().c_str(), chr, screenX, screenY);
-						}
-					}
-					b = b << 1;
-				}
-			}
-		}
-		if (enhancedFont) {
-			if (!enhancedFontTTF) {
-				extern byte *_palette;
-				left *= g_sci->_enhancementMultiplier;
-				top *= g_sci->_enhancementMultiplier;
-
-				for (int y = 0; y < pngfont->h; y++) {
-					if (greyedOutput) {
-						if (y % 2 == 0) {
-							mask = ((greyedTop++) % 2) ? 0xAA : 0x55;
-						}
-					}
-					for (int x = 0; x < pngfont->w; x++) {
-						if (greyedOutput)
-							mask = ((greyedTop++) % 2) ? 0xAA : 0x55;
-						b = enhfont[(((y * (pngfont->w)) + x) * 4) + 3] & mask;
-						if (b & 0x80) {
-							int screenX = (left) + x;
-							int screenY = (top) + y;
-							if (0 <= screenX && screenX < screenWidth && 0 <= screenY && screenY < screenHeight) {
-
-								_screen->putFontPixelR(screenX, screenY, 255, color, enhfont[(((y * (pngfont->w)) + x) * 4) + 3], 15, 0);
-								_screen->putFontPixelG(screenX, screenY, 255, color, enhfont[(((y * (pngfont->w)) + x) * 4) + 3], 15, 0);
-								_screen->putFontPixelB(screenX, screenY, 255, color, enhfont[(((y * (pngfont->w)) + x) * 4) + 3], 15, 0);
-
-							} else {
-								warning("%s glpyh %d drawn out of bounds: %d, %d", _resource->name().c_str(), chr, screenX, screenY);
-							}
-						}
-						b = b << 1;
-					}
-				}
-			} else {
-				extern byte *_palette;
-				left *= g_sci->_enhancementMultiplier;
-				top *= g_sci->_enhancementMultiplier;
-
-				for (int y = 0; y < _chars[chr].height * g_sci->_enhancementMultiplier; y++) {
-					if (greyedOutput) {
-						if (y % 2 == 0) {
-							mask = ((greyedTop++) % 2) ? 0xAA : 0x55;
-						}
-					}
-					for (int x = 0; x < _chars[chr].width * g_sci->_enhancementMultiplier; x++) {
-						if (greyedOutput)
-							mask = ((greyedTop++) % 2) ? 0xAA : 0x55;
-						b = enhfont[(((y * (_chars[chr].width * g_sci->_enhancementMultiplier)) + x))] & mask;
-						if (b & 0x80) {
-							int screenX = (left) + x;
-							int screenY = (top) + y;
-							if (0 <= screenX && screenX < screenWidth && 0 <= screenY && screenY < screenHeight) {
-
-								_screen->putFontPixelR(screenX, screenY, 255, color, enhfont[(((y * (_chars[chr].width * g_sci->_enhancementMultiplier)) + x))], 15, 0);
-								_screen->putFontPixelG(screenX, screenY, 255, color, enhfont[(((y * (_chars[chr].width * g_sci->_enhancementMultiplier)) + x))], 15, 0);
-								_screen->putFontPixelB(screenX, screenY, 255, color, enhfont[(((y * (_chars[chr].width * g_sci->_enhancementMultiplier)) + x))], 15, 0);
-
-							} else {
-								warning("%s glpyh %d drawn out of bounds: %d, %d", _resource->name().c_str(), chr, screenX, screenY);
-							}
-						}
-						b = b << 1;
-					}
-				}
-			}
-		}
-	}
+}
 
 #ifdef ENABLE_SCI32
 void GfxFontFromResource::drawToBuffer(uint16 chr, int16 top, int16 left, byte color, bool greyedOutput, byte *buffer, int16 bufWidth, int16 bufHeight) {

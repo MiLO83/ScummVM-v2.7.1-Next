@@ -66,8 +66,6 @@ public:
 
 	void setup(int16 number, bool blackoutFlag);
 	void doit(Common::Rect picRect);
-	void fadeOut();
-	void fadeIn();
 
 private:
 	void init();
@@ -76,6 +74,8 @@ private:
 	void setNewPalette(bool blackoutFlag);
 	void setNewScreen(bool blackoutFlag);
 	void copyRectToScreen(const Common::Rect rect, bool blackoutFlag);
+	void fadeOut();
+	void fadeIn();
 	void pixelation(bool blackoutFlag);
 	void blocks(bool blackoutFlag);
 	void straight(int16 number, bool blackoutFlag);

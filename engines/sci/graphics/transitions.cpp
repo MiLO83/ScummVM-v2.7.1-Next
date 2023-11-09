@@ -33,9 +33,6 @@
 namespace Sci {
 
 //#define DISABLE_TRANSITIONS	// uncomment to disable room transitions (for development only! helps in testing games quickly)
-extern float blackFade;
-extern Common::Rect _currentViewPort;
-extern bool playingVideoCutscenes;
 
 GfxTransitions::GfxTransitions(GfxScreen *screen, GfxPalette *palette)
 	: _screen(screen), _palette(palette) {
@@ -143,20 +140,15 @@ void GfxTransitions::updateScreen() {
 
 	while (g_system->getEventManager()->pollEvent(ev)) {}	// discard all events
 
-		if (!playingVideoCutscenes) {
-			g_system->updateScreen();
-		}
+	g_system->updateScreen();
 }
 
 void GfxTransitions::updateScreenAndWait(uint32 shouldBeAtMsec) {
-	if (!playingVideoCutscenes) {
-		updateScreen();
-	
-		// if we have still some time left, delay accordingly
-		uint32 msecPos = g_system->getMillis() - _transitionStartTime;
-		if (shouldBeAtMsec > msecPos)
-			g_system->delayMillis(shouldBeAtMsec - msecPos);
-	}
+	updateScreen();
+	// if we have still some time left, delay accordingly
+	uint32 msecPos = g_system->getMillis() - _transitionStartTime;
+	if (shouldBeAtMsec > msecPos)
+		g_system->delayMillis(shouldBeAtMsec - msecPos);
 }
 
 // will translate a number and return corresponding translationEntry
@@ -309,19 +301,16 @@ void GfxTransitions::copyRectToScreen(const Common::Rect rect, bool blackoutFlag
 // Note: don't do too many steps in here, otherwise cpu will crap out because of
 // the load
 void GfxTransitions::fadeOut() {
+	byte oldPalette[3 * 256], workPalette[3 * 256];
+	int16 stepNr, colorNr;
+	// Sierra did not fade in/out color 255 for sci1.1, but they used it in
+	//  several pictures (e.g. qfg3 demo/intro), so the fading looked weird
+	int16 tillColorNr = getSciVersion() >= SCI_VERSION_1_1 ? 255 : 254;
 
-	if (!playingVideoCutscenes) {
-		byte oldPalette[3 * 256], workPalette[3 * 256];
-		int16 stepNr, colorNr;
-		// Sierra did not fade in/out color 255 for sci1.1, but they used it in
-		//  several pictures (e.g. qfg3 demo/intro), so the fading looked weird
+	_screen->grabPalette(oldPalette, 0, 256);
 
-		int16 tillColorNr = getSciVersion() >= SCI_VERSION_1_1 ? 255 : 254;
-
-		_screen->grabPalette(oldPalette, 0, 256);
-		_palette->kernelSetIntensity(1, tillColorNr + 1, 100, true);
-		for (stepNr = 100; stepNr >= 0; stepNr -= 10) {
-			/*for (colorNr = 1; colorNr <= tillColorNr; colorNr++) {
+	for (stepNr = 100; stepNr >= 0; stepNr -= 10) {
+		for (colorNr = 1; colorNr <= tillColorNr; colorNr++) {
 			if (_palette->colorIsFromMacClut(colorNr)) {
 				workPalette[colorNr * 3 + 0] = oldPalette[colorNr * 3];
 				workPalette[colorNr * 3 + 1] = oldPalette[colorNr * 3 + 1];
@@ -332,42 +321,22 @@ void GfxTransitions::fadeOut() {
 				workPalette[colorNr * 3 + 2] = oldPalette[colorNr * 3 + 2] * stepNr / 100;
 			}
 		}
-		_screen->setPalette(workPalette + 3, 1, tillColorNr);*/
-
-			blackFade = (float)((float)stepNr * 0.01);
-			if (_picRect.width() != 0 && _picRect.height() != 0) {
-
-				_screen->convertToRGB(_picRect);
-				copyRectToScreen(_picRect, false);
-				g_system->updateScreen();
-				g_sci->getEngineState()->sleep(2);
-			}
-		}
+		_screen->setPalette(workPalette + 3, 1, tillColorNr);
+		g_sci->getEngineState()->sleep(2);
 	}
 }
 
 // Note: don't do too many steps in here, otherwise cpu will crap out because of
 // the load
 void GfxTransitions::fadeIn() {
-	if (!playingVideoCutscenes) {
+	int16 stepNr;
+	// Sierra did not fade in/out color 255 for sci1.1, but they used it in
+	//  several pictures (e.g. qfg3 demo/intro), so the fading looked weird
+	int16 tillColorNr = getSciVersion() >= SCI_VERSION_1_1 ? 255 : 254;
 
-		int16 stepNr;
-		// Sierra did not fade in/out color 255 for sci1.1, but they used it in
-		//  several pictures (e.g. qfg3 demo/intro), so the fading looked weird
-		int16 tillColorNr = getSciVersion() >= SCI_VERSION_1_1 ? 255 : 254;
-		_palette->kernelSetIntensity(1, tillColorNr + 1, 100, true);
-		for (stepNr = 0; stepNr <= 100; stepNr += 10) {
-
-			blackFade = (float)((float)stepNr * 0.01);
-			if (_picRect.width() != 0 && _picRect.height() != 0) {
-
-				_screen->convertToRGB(_picRect);
-				copyRectToScreen(_picRect, false);
-				g_system->updateScreen();
-				g_sci->getEngineState()->sleep(2);
-			}
-		}
-		_screen->_picNotValid = 0;
+	for (stepNr = 0; stepNr <= 100; stepNr += 10) {
+		_palette->kernelSetIntensity(1, tillColorNr + 1, stepNr, true);
+		g_sci->getEngineState()->sleep(2);
 	}
 }
 

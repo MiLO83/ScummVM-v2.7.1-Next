@@ -233,36 +233,6 @@ const ADExtraGuiOptionsMap optionsList[] = {
 
 const PopUpOptionsMap popUpOptionsList[] = {
 	{
-		GAMEOPTION_STEREOSCOPIC,
-		_s("Stereoscopic:"),
-			_s("Render Left/Right 'Side-by-Side'format"),
-			"stereoscopic_rendering",
-		kStereoscopicModeOff,
-		{
-			{
-				_s("2D"),
-				kStereoscopicModeOff
-			},
-			{
-				_s("2D Depth Map"),
-				kStereoscopicMode2DDepth
-			},
-			{
-				_s("2D (Side-by-Side)"),
-				kStereoscopicModeFlat
-			},
-			{
-				_s("3D L/R Pair (Side-by-Side)"),
-				kStereoscopicModePair
-			},
-			{
-				_s("3D Depth Map (Side-by-Side)"),
-				kStereoscopicModeDepth
-			},
-			POPUP_OPTIONS_ITEMS_TERMINATOR
-		}
-	},
-	{
 		GAMEOPTION_MIDI_MODE,
 		_s("MIDI mode:"),
 		_s("When using external MIDI devices (e.g. through USB-MIDI), select your device here"),

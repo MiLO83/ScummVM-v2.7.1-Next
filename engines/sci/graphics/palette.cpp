@@ -519,15 +519,9 @@ void GfxPalette::copySysPaletteToScreen(bool update) {
 			bpal[i * 3 + 2] = convertMacGammaToSCIGamma(_macClut[i * 3 + 2]);
 		} else if (_sysPalette.colors[i].used != 0) {
 			// Otherwise, copy to the screen
-			if (!overridePalette) {
-				bpal[i * 3] = CLIP(_sysPalette.colors[i].r * _sysPalette.intensity[i] / 100, 0, 255);
-				bpal[i * 3 + 1] = CLIP(_sysPalette.colors[i].g * _sysPalette.intensity[i] / 100, 0, 255);
-				bpal[i * 3 + 2] = CLIP(_sysPalette.colors[i].b * _sysPalette.intensity[i] / 100, 0, 255);
-			} else {
-				bpal[i * 3] = CLIP(_paletteOverride.colors[i].r * _sysPalette.intensity[i] / 100, 0, 255);
-				bpal[i * 3 + 1] = CLIP(_paletteOverride.colors[i].g * _sysPalette.intensity[i] / 100, 0, 255);
-				bpal[i * 3 + 2] = CLIP(_paletteOverride.colors[i].b * _sysPalette.intensity[i] / 100, 0, 255);
-			}
+			bpal[i * 3    ] = CLIP(_sysPalette.colors[i].r * _sysPalette.intensity[i] / 100, 0, 255);
+			bpal[i * 3 + 1] = CLIP(_sysPalette.colors[i].g * _sysPalette.intensity[i] / 100, 0, 255);
+			bpal[i * 3 + 2] = CLIP(_sysPalette.colors[i].b * _sysPalette.intensity[i] / 100, 0, 255);
 		}
 	}
 
@@ -540,7 +534,7 @@ void GfxPalette::copySysPaletteToScreen(bool update) {
 bool GfxPalette::kernelSetFromResource(GuiResourceId resourceId, bool force) {
 	Resource *palResource = _resMan->findResource(ResourceId(kResourceTypePalette, resourceId), false);
 	Palette palette;
-	debug(10, "Palette Resource : %u", resourceId);
+
 	if (palResource) {
 		createFromData(*palResource, &palette);
 		set(&palette, force);
@@ -578,8 +572,6 @@ int16 GfxPalette::kernelFindColor(uint16 r, uint16 g, uint16 b, bool force16BitC
 // Returns true, if palette got changed
 bool GfxPalette::kernelAnimate(byte fromColor, byte toColor, int speed) {
 	Color col;
-	Color colOver;
-	//byte colorNr;
 	int16 colorCount;
 	uint32 now = g_sci->getTickCount();
 
@@ -608,24 +600,18 @@ bool GfxPalette::kernelAnimate(byte fromColor, byte toColor, int speed) {
 				if (speed > 0) {
 					// TODO: Not really sure about this, sierra sci seems to do exactly this here
 					col = _sysPalette.colors[fromColor];
-					colOver = _paletteOverride.colors[fromColor];
 					if (fromColor < toColor) {
 						colorCount = toColor - fromColor - 1;
 						memmove(&_sysPalette.colors[fromColor], &_sysPalette.colors[fromColor + 1], colorCount * sizeof(Color));
-						memmove(&_paletteOverride.colors[fromColor], &_paletteOverride.colors[fromColor + 1], colorCount * sizeof(Color));
 					}
 					_sysPalette.colors[toColor - 1] = col;
-					_paletteOverride.colors[toColor - 1] = colOver;
 				} else {
 					col = _sysPalette.colors[toColor - 1];
-					colOver = _paletteOverride.colors[toColor - 1];
 					if (fromColor < toColor) {
 						colorCount = toColor - fromColor - 1;
 						memmove(&_sysPalette.colors[fromColor + 1], &_sysPalette.colors[fromColor], colorCount * sizeof(Color));
-						memmove(&_paletteOverride.colors[fromColor + 1], &_paletteOverride.colors[fromColor], colorCount * sizeof(Color));
 					}
 					_sysPalette.colors[fromColor] = col;
-					_paletteOverride.colors[fromColor] = colOver;
 				}
 				// removing schedule
 				_schedules[scheduleNr].schedule = now + ABS(speed);

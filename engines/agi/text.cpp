@@ -469,8 +469,6 @@ namespace Agi
 
 	bool TextMgr::messageBox(const char* textPtr) {
 
-#ifdef WIN32
-
 		inworld_workspaceId = Common::String::format("scummvmnext_%u", (uint32)_vm->getGameID()).c_str();
 		debug(Common::String::format("inworld_workspaceId = %s", inworld_workspaceId).c_str());
 		if (isPartOf(textPtr, understood))
@@ -480,7 +478,7 @@ namespace Agi
 
 			request_session->addHeader(Common::String::format("Content-Type: %s", "application/json"));
 			request_session->addHeader(Common::String::format("authorization: Basic %s", inworld_base64.c_str()));
-
+			
 			const Common::JSONValue _jsonData_Session = Common::String::format("{\"name\":\"%s\"}", inworld_characterName.c_str());
 			request_session->addPostField(_jsonData_Session.asString());
 
@@ -604,10 +602,10 @@ namespace Agi
 
 				closeWindow();
 				_vm->_noSaveLoadAllowed = false;
-			}
+				}
 		}
 		else {
-#endif // WIN32
+
 			drawMessageBox(textPtr);
 
 			if (_vm->getFlag(VM_FLAG_OUTPUT_MODE))

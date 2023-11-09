@@ -49,7 +49,6 @@ GfxPorts::~GfxPorts() {
 }
 
 void GfxPorts::init(bool usesOldGfxFunctions, GfxPaint16 *paint16, GfxText16 *text16) {
-
 	_usesOldGfxFunctions = usesOldGfxFunctions;
 	_paint16 = paint16;
 	_text16 = text16;
@@ -65,7 +64,7 @@ void GfxPorts::init(bool usesOldGfxFunctions, GfxPaint16 *paint16, GfxText16 *te
 	_menuBarRect = Common::Rect(0, 0, _screen->getScriptWidth(), 9);
 	_menuRect = Common::Rect(0, 0, _screen->getScriptWidth(), 10);
 	_menuLine = Common::Rect(0, 9, _screen->getScriptWidth(), 10);
-	_currentViewPort = Common::Rect(0, 0, _screen->getDisplayWidth(), _screen->getDisplayHeight());
+
 	_wmgrPort = new Port(1);
 	_windowsById.resize(2);
 	_windowsById[0] = _wmgrPort; // wmgrPort is supposed to be accessible via id 0

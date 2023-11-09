@@ -92,7 +92,6 @@ public:
 
 	void kernelDrawStatus(const char *text, int16 colorPen, int16 colorBack);
 	void kernelDrawMenuBar(bool clear);
-	void SaveMenuBits();
 
 private:
 	GuiMenuItemEntry *findItem(uint16 menuId, uint16 itemId);
@@ -124,7 +123,6 @@ private:
 
 	Port *_oldPort;
 	reg_t _barSaveHandle;
-	reg_t _statusSaveHandle;
 	reg_t _menuSaveHandle;
 	Common::Rect _menuRect;
 

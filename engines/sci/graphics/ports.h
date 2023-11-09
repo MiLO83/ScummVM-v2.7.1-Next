@@ -108,12 +108,10 @@ public:
 	Port *_menuPort;
 	Common::Rect _menuBarRect;
 	Common::Rect _menuRect;
-	Common::Rect _statusRect;
 	Common::Rect _menuLine;
 	Port *_curPort;
-	uint16 _textWindow;
+
 	void saveLoadWithSerializer(Common::Serializer &ser) override;
-	Common::Rect _currentViewPort;
 
 private:
 	/** The list of open 'windows' (and ports), in visual order. */

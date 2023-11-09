@@ -24,10 +24,8 @@
 
 #include "sci/resource/resource.h"
 #include "sci/graphics/helpers.h"
-#include "graphics/font.h"
-#include "graphics/fonts/ttf.h"
 #include "sci/util.h"
-#include <map>
+
 namespace Sci {
 
 #ifdef ENABLE_SCI32
@@ -48,7 +46,6 @@ public:
 	virtual byte getCharHeight(uint16 chr) { return 0; }
 	virtual void draw(uint16 chr, int16 top, int16 left, byte color, bool greyedOutput) {}
 	virtual void drawToBuffer(uint16 chr, int16 top, int16 left, byte color, bool greyedOutput, byte *buffer, int16 width, int16 height) {}
-	Graphics::Font *_ttffont;
 };
 
 
@@ -89,10 +86,6 @@ private:
 	uint8 _fontHeight;
 	uint16 _numChars;
 	Charinfo *_chars;
-	Charinfo *_charsTTF;
-	Graphics::Surface *pngfont;
-	const byte *enhfont;
-
 };
 
 } // End of namespace Sci

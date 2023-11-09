@@ -41,43 +41,15 @@
 #include "sci/graphics/screen.h"
 #include "sci/graphics/transitions.h"
 #include "sci/graphics/animate.h"
-#include <common/config-manager.h>
-#include <image/png.h>
-#include <map>
-#include <string>
-#include <cctype>
-#include <common/system.h>
-#include <list>
-#include <algorithm>
-#include <engines/sci/sound/midiparser_sci.h>
-#include <dirent.h>
 
 namespace Sci {
-bool cachedViews = false;
-extern bool playingVideoCutscenes;
-extern bool wasPlayingVideoCutscenes;
-extern std::string videoCutsceneEnd;
-extern std::string videoCutsceneStart;
-extern MidiParser_SCI *midiMusic;
-extern bool cutscene_mute_midi;
-extern std::list<std::string> extraDIRList;
-extern std::list<std::string>::iterator extraDIRListit;
-extern std::string extraPath;
+
 GfxAnimate::GfxAnimate(EngineState *state, ScriptPatcher *scriptPatcher, GfxCache *cache, GfxPorts *ports, GfxPaint16 *paint16, GfxScreen *screen, GfxPalette *palette, GfxCursor *cursor, GfxTransitions *transitions)
 	: _s(state), _scriptPatcher(scriptPatcher), _cache(cache), _ports(ports), _paint16(paint16), _screen(screen), _palette(palette), _cursor(cursor), _transitions(transitions) {
 	init();
 }
 
 GfxAnimate::~GfxAnimate() {
-}
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> > fontsMap;
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator fontsMapit;
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> > viewsMap;
-extern std::map<std::string, std::pair<Graphics::Surface *, const byte *> >::iterator viewsMapit;
-extern bool preLoadedPNGs;
-
-int clip(int n, int lower, int upper) {
-	return n <= lower ? lower : n >= upper ? upper : n;
 }
 
 void GfxAnimate::init() {
@@ -159,15 +131,6 @@ bool GfxAnimate::detectFastCast() {
 void GfxAnimate::disposeLastCast() {
 	_lastCastData.clear();
 }
-bool fileIsInExtraDIR(std::string fileName) {
-	extraDIRListit = std::find(extraDIRList.begin(), extraDIRList.end(), fileName);
-	// Check if iterator points to end or not
-	if (extraDIRListit != extraDIRList.end()) {
-		return true;
-	} else {
-		return false;
-	}
-}
 
 bool GfxAnimate::invoke(List *list, int argc, reg_t *argv) {
 	reg_t curAddress = list->first;
@@ -225,437 +188,57 @@ bool sortHelper(const AnimateEntry &entry1, const AnimateEntry &entry2) {
 	}
 	return entry1.y < entry2.y;
 }
-bool hazEnding(std::string const &fullString, std::string const &ending) {
-	if (fullString.length() >= ending.length()) {
-		return (0 == fullString.compare(fullString.length() - ending.length(), ending.length(), ending));
-	} else {
-		return false;
-	}
-}
 
+void GfxAnimate::makeSortedList(List *list) {
+	reg_t curAddress = list->first;
+	Node *curNode = _s->_segMan->lookupNode(curAddress);
+	int16 listNr;
 
-Graphics::Surface *loadCelPNG(Common::SeekableReadStream *s) {
-	
-	Image::PNGDecoder d;
+	// Clear lists
+	_list.clear();
+	_lastCastData.clear();
 
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
+	// Fill the list
+	for (listNr = 0; curNode != nullptr; listNr++) {
+		AnimateEntry listEntry;
+		const reg_t curObject = curNode->value;
+		listEntry.object = curObject;
+		listEntry.castHandle = NULL_REG;
 
-	Graphics::Surface* srf;
-	if (d.hasPalette()) {
-		srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8());
-	}
-	else {
-		srf = d.getSurface()->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-	}
-	return srf;
-}
-
-Graphics::Surface *loadCelPNGCLUT(Common::SeekableReadStream *s) {
-	Image::PNGDecoder d;
-
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
-	Graphics::Surface* srf;
-	if (d.hasPalette()) {
-		srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8());
-	}
-	else {
-		srf = d.getSurface()->convertTo(Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-	}
-	return srf;
-}
-
-Graphics::Surface* loadCelPNGCLUTOverride(Common::SeekableReadStream* s) {
-	Image::PNGDecoder d;
-	if (!s)
-		return nullptr;
-	d.loadStream(*s);
-	delete s;
-	Graphics::Surface* srf = d.getSurface()->convertTo(Graphics::PixelFormat::createFormatCLUT8(), d.getPalette());
-	for (int16 i = 0; i < 256; i++) {
-		g_sci->_gfxPalette16->_paletteOverride.colors[i].r = d.getPalette()[i * 3];
-		g_sci->_gfxPalette16->_paletteOverride.colors[i].g = d.getPalette()[(i * 3) + 1];
-		g_sci->_gfxPalette16->_paletteOverride.colors[i].b = d.getPalette()[(i * 3) + 2];
-	}
-	g_sci->_gfxPalette16->_sysPalette = g_sci->_gfxPalette16->_paletteOverride;
-	//memcpy((void *)g_sci->_gfxPalette16->_paletteOverride, d.getPalette(), sizeof(d.getPalette()));
-	//_tehScreen->setPalette(d.getPalette(), 0, 256, true);
-	return srf;
-}
-void GfxAnimate::LoadAllExtraPNG() {
-	g_sci->cachedFiles = 0;
-	if (g_sci->totalFilesToCache > 0) {
-
-		std::string directory = Common::FSNode(ConfMan.get("extrapath")).getPath().c_str();
-
-		DIR *dir;
-		class dirent *ent;
-		//class stat st;
-
-		dir = opendir(directory.c_str());
-		while ((ent = readdir(dir)) != NULL) {
-			const std::string file_name = ent->d_name;
-			const std::string full_file_name = directory + "/" + file_name;
-
-			//if (file_name[0] == '.')
-			//continue;
-
-			//if (stat(full_file_name.c_str(), &st) == -1)
-			//continue;
-
-			//const bool is_directory = (st.st_mode & S_IFDIR) != 0;
-
-			//if (is_directory)
-			//continue;
-
-			if (strstr(file_name.c_str(), ".png"))
-			{
-				if ((strstr(file_name.c_str(), "pic") || strstr(file_name.c_str(), "view")) && !strstr(file_name.c_str(), "_256") && !strstr(file_name.c_str(), "_256RP")) {
-					Common::String fn = Common::FSNode(ConfMan.get("extrapath")).getChild(file_name.c_str()).getName();
-					Common::SeekableReadStream* file = SearchMan.createReadStreamForMember(fn);
-					if (file && !strstr(file_name.c_str(), "_256")) {
-						Graphics::Surface* viewpngtmp = loadCelPNG(file);
-						if (viewpngtmp) {
-							const byte* viewenh = (const byte*)viewpngtmp->getPixels();
-							if (viewenh) {
-								std::pair<Graphics::Surface*, const byte*> tmp;
-								tmp.first = viewpngtmp;
-								tmp.second = viewenh;
-								viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface*, const byte*> >(file_name.c_str(), tmp));
-								debug(fn.c_str());
-								debug("LOADED FROM DISC");
-								g_sci->cachedFiles++;
-								if ((uint)((float)((float)g_sci->cachedFiles / (float)g_sci->totalFilesToCache) * 100.00f) != (uint)g_sci->cachedFilesPercent) {
-
-									char loadstrbuffer[32];
-									int retVal, buf_size = 32;
-									retVal = snprintf(loadstrbuffer, buf_size, "loading.%u.percent.png", (uint)g_sci->cachedFilesPercent);
-									Common::String loadname = loadstrbuffer;
-									Common::String fnload = Common::FSNode(ConfMan.get("extrapath")).getChild(loadname).getName();
-									Common::SeekableReadStream* fileload = SearchMan.createReadStreamForMember(Common::FSNode(ConfMan.get("extrapath")).getChild(fnload).getName());
-									if (fileload) {
-										//debug("Found : %s", loadname.c_str());
-										Graphics::Surface* viewpngloadtmp = loadCelPNG(fileload);
-										g_system->copyRectToScreen(viewpngloadtmp->getPixels(), viewpngloadtmp->w * 4, 0, 0, viewpngloadtmp->w, viewpngloadtmp->h);
-										g_system->updateScreen();
-									}
-									else {
-										//debug("Didn't find : %s", loadname.c_str());
-									}
-									g_sci->cachedFilesPercent = ((float)((float)g_sci->cachedFiles / (float)g_sci->totalFilesToCache) * 100.00f);
-								}
-							}
-						}
-					}
-					if ((strstr(file_name.c_str(), "pic") || strstr(file_name.c_str(), "view")) && (strstr(file_name.c_str(), "_256") || strstr(file_name.c_str(), "_256RP"))) {
-						Graphics::Surface* viewpngtmp = loadCelPNGCLUT(file);
-						if (viewpngtmp) {
-							const byte* viewenh = (const byte*)viewpngtmp->getPixels();
-							if (viewenh) {
-								std::pair<Graphics::Surface*, const byte*> tmp;
-								tmp.first = viewpngtmp;
-								tmp.second = viewenh;
-								viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface*, const byte*> >(file_name.c_str(), tmp));
-								debug(fn.c_str());
-								debug("LOADED FROM DISC");
-								g_sci->cachedFiles++;
-								if ((uint)((float)((float)g_sci->cachedFiles / (float)g_sci->totalFilesToCache) * 100.00f) != (uint)g_sci->cachedFilesPercent) {
-
-									char loadstrbuffer[32];
-									int retVal, buf_size = 32;
-									retVal = snprintf(loadstrbuffer, buf_size, "loading.%u.percent.png", (uint)g_sci->cachedFilesPercent);
-									Common::String loadname = loadstrbuffer;
-									Common::String fnload = Common::FSNode(ConfMan.get("extrapath")).getChild(loadname).getName();
-									Common::SeekableReadStream* fileload = SearchMan.createReadStreamForMember(Common::FSNode(ConfMan.get("extrapath")).getChild(fnload).getName());
-									if (fileload) {
-										//debug("Found : %s", loadname.c_str());
-										Graphics::Surface* viewpngloadtmp = loadCelPNG(fileload);
-										g_system->copyRectToScreen(viewpngloadtmp->getPixels(), viewpngloadtmp->w * 4, 0, 0, viewpngloadtmp->w, viewpngloadtmp->h);
-										g_system->updateScreen();
-									}
-									else {
-										//debug("Didn't find : %s", loadname.c_str());
-									}
-									g_sci->cachedFilesPercent = ((float)((float)g_sci->cachedFiles / (float)g_sci->totalFilesToCache) * 100.00f);
-								}
-							}
-						}
-					}
-				}
+		// Get data from current object
+		listEntry.givenOrderNo = listNr;
+		listEntry.viewId = readSelectorValue(_s->_segMan, curObject, SELECTOR(view));
+		listEntry.loopNo = readSelectorValue(_s->_segMan, curObject, SELECTOR(loop));
+		listEntry.celNo = readSelectorValue(_s->_segMan, curObject, SELECTOR(cel));
+		listEntry.paletteNo = readSelectorValue(_s->_segMan, curObject, SELECTOR(palette));
+		listEntry.x = readSelectorValue(_s->_segMan, curObject, SELECTOR(x));
+		listEntry.y = readSelectorValue(_s->_segMan, curObject, SELECTOR(y));
+		listEntry.z = readSelectorValue(_s->_segMan, curObject, SELECTOR(z));
+		listEntry.priority = readSelectorValue(_s->_segMan, curObject, SELECTOR(priority));
+		listEntry.signal = readSelectorValue(_s->_segMan, curObject, SELECTOR(signal));
+		if (getSciVersion() >= SCI_VERSION_1_1) {
+			// Cel scaling
+			listEntry.scaleSignal = readSelectorValue(_s->_segMan, curObject, SELECTOR(scaleSignal));
+			if (listEntry.scaleSignal & kScaleSignalDoScaling) {
+				listEntry.scaleX = readSelectorValue(_s->_segMan, curObject, SELECTOR(scaleX));
+				listEntry.scaleY = readSelectorValue(_s->_segMan, curObject, SELECTOR(scaleY));
+			} else {
+				listEntry.scaleX = 128;
+				listEntry.scaleY = 128;
 			}
+		} else {
+			listEntry.scaleSignal = 0;
+			listEntry.scaleX = 128;
+			listEntry.scaleY = 128;
 		}
-		closedir(dir);
+		// listEntry.celRect is filled in AnimateFill()
+		listEntry.showBitsFlag = false;
+
+		_list.push_back(listEntry);
+
+		curAddress = curNode->succ;
+		curNode = _s->_segMan->lookupNode(curAddress);
 	}
-}
-	void GfxAnimate::makeSortedList(List *list) {
-	    reg_t curAddress = list->first;
-	    Node *curNode = _s->_segMan->lookupNode(curAddress);
-	    int16 listNr;
-	   
-	    // Clear lists
-	    _list.clear();
-	    _lastCastData.clear();
-
-	    // Fill the list
-	    for (listNr = 0; curNode != 0; listNr++) {
-		    AnimateEntry listEntry;
-		    const reg_t curObject = curNode->value;
-		    listEntry.object = curObject;
-		    listEntry.castHandle = NULL_REG;
-
-		    // Get data from current object
-		    listEntry.givenOrderNo = listNr;
-		    listEntry.viewId = readSelectorValue(_s->_segMan, curObject, SELECTOR(view));
-		    listEntry.loopNo = readSelectorValue(_s->_segMan, curObject, SELECTOR(loop));
-		    listEntry.celNo = readSelectorValue(_s->_segMan, curObject, SELECTOR(cel));
-		    listEntry.paletteNo = readSelectorValue(_s->_segMan, curObject, SELECTOR(palette));
-		    listEntry.signal = readSelectorValue(_s->_segMan, curObject, SELECTOR(signal));
-
-		    listEntry.y = readSelectorValue(_s->_segMan, curObject, SELECTOR(y));
-		    listEntry.x = readSelectorValue(_s->_segMan, curObject, SELECTOR(x));		    
-		    listEntry.z = readSelectorValue(_s->_segMan, curObject, SELECTOR(z));
-		    listEntry.priority = readSelectorValue(_s->_segMan, curObject, SELECTOR(priority));
-		    if (getSciVersion() >= SCI_VERSION_1_1) {
-			    // Cel scaling
-			    listEntry.scaleSignal = readSelectorValue(_s->_segMan, curObject, SELECTOR(scaleSignal));
-			    if (listEntry.scaleSignal & kScaleSignalDoScaling) {
-				    listEntry.scaleX = readSelectorValue(_s->_segMan, curObject, SELECTOR(scaleX));
-				    listEntry.scaleY = readSelectorValue(_s->_segMan, curObject, SELECTOR(scaleY));
-			    } else {
-				    listEntry.scaleX = 128;
-				    listEntry.scaleY = 128;
-			    }
-		    } else {
-			    listEntry.scaleSignal = 0;
-			    listEntry.scaleX = 128;
-			    listEntry.scaleY = 128;
-		    }
-		    listEntry.showBitsFlag = false;
-		    //
-			{
-			    char viewstrbuffer[32];
-			    int retVal, buf_size = 32;
-			    retVal = snprintf(viewstrbuffer, buf_size, "view.%u.%u.%u", listEntry.viewId, listEntry.loopNo, listEntry.celNo);
-			    Common::String fn = viewstrbuffer;
-
-			    if (g_sci->stereoscopic && g_sci->stereoRightEye) {
-				    if (fileIsInExtraDIR((fn + ".reye.png").c_str()))
-					    fn += ".reye";
-			    }
-
-			    if (videoCutsceneEnd == fn.c_str()) {
-				    playingVideoCutscenes = false;
-				    wasPlayingVideoCutscenes = true;
-				    videoCutsceneEnd = "-undefined-";
-				    videoCutsceneStart = "-undefined-";
-				    g_system->getMixer()->muteSoundType(Audio::Mixer::kMusicSoundType, false);
-				    g_system->getMixer()->muteSoundType(Audio::Mixer::kSFXSoundType, false);
-				    g_system->getMixer()->muteSoundType(Audio::Mixer::kSpeechSoundType, false);
-				    Common::String dbg = "Cutscene ENDED on : " + fn;
-				    debug(dbg.c_str());
-			    }
-			    if (!extraDIRList.empty() && !wasPlayingVideoCutscenes) {
-				    if (fileIsInExtraDIR((fn + ".cts").c_str())) {
-					    Common::String cfgfileName = fn + ".cts";
-					    debug(cfgfileName.c_str());
-					    Common::SeekableReadStream *cfg = SearchMan.createReadStreamForMember(cfgfileName);
-					    if (cfg) {
-						    Common::String line, texttmp;
-						    cutscene_mute_midi = false;
-						    while (!cfg->eos()) {
-							    texttmp = cfg->readLine();
-							    if (texttmp.firstChar() != '#') {
-								    if (texttmp.contains("mute_midi")) {
-									    cutscene_mute_midi = true;
-								    } else {
-									    videoCutsceneEnd = texttmp.c_str();
-								    }
-							    }
-						    }
-						    videoCutsceneStart = viewstrbuffer;
-
-						    g_sci->oggBackground = fn + ".ogg";
-
-						    g_sci->_theoraDecoderCutscenes = new Video::TheoraDecoder();
-
-						    g_sci->_theoraDecoderCutscenes->loadFile(fn + ".ogg");
-						    g_sci->_theoraDecoderCutscenes->start();
-						    int16 frameTime = g_sci->_theoraDecoderCutscenes->getTimeToNextFrame();
-
-						    playingVideoCutscenes = true;
-						    wasPlayingVideoCutscenes = true;
-						    g_system->getMixer()->muteSoundType(Audio::Mixer::kMusicSoundType, true);
-						    g_system->getMixer()->muteSoundType(Audio::Mixer::kSFXSoundType, true);
-						    g_system->getMixer()->muteSoundType(Audio::Mixer::kSpeechSoundType, true);
-
-						    if (cutscene_mute_midi) {
-							    if (midiMusic != NULL)
-								    midiMusic->setMasterVolume(0);
-						    }
-						    Common::String dbg = "Cutscene STARTED on : " + fn;
-						    debug(dbg.c_str());
-						    dbg = "Cutscene set to end on : ";
-						    dbg += videoCutsceneEnd.c_str();
-						    debug(dbg.c_str());
-					    }
-				    } else {
-					    debug(10, ("NO " + fn + ".cts").c_str());
-				    }
-			    }
-			    if (g_sci->enhanced_gfx_enabled) {
-			    
-			    bool preloaded = false;
-			    listEntry.viewpng = NULL;
-			    listEntry.viewenh = NULL;
-			    listEntry.viewEnhanced = false;
-				debug("Attempting to load %s.png, %s_256.png, or %s_256RP.png", fn.c_str(), fn.c_str(), fn.c_str());
-			    if (viewsMap.size() > 0)
-				    for (viewsMapit = viewsMap.begin();
-				         viewsMapit != viewsMap.end(); ++viewsMapit) {
-
-					    if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
-
-						    //debug(viewsMapit->first.c_str());
-						    std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
-						    listEntry.viewpng = tmp.first;
-						    //debug("RELOADED FROM RAM");
-						    listEntry.viewenh = tmp.second;
-						    if (listEntry.viewenh) {
-							    preloaded = true;
-							    listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-							    listEntry.viewEnhanced = true;
-							    listEntry.enhancedIs256 = (listEntry.viewpng->format != Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-						    }
-					    }
-						if (strcmp(viewsMapit->first.c_str(), (fn + "_256.png").c_str()) == 0) {
-
-							//debug(viewsMapit->first.c_str());
-							std::pair<Graphics::Surface*, const byte*> tmp = viewsMapit->second;
-							listEntry.viewpng = tmp.first;
-							//debug("RELOADED FROM RAM");
-							listEntry.viewenh = tmp.second;
-							if (listEntry.viewenh) {
-								preloaded = true;
-								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-								listEntry.viewEnhanced = true;
-								listEntry.enhancedIs256 = true;
-							}
-						}
-						if (strcmp(viewsMapit->first.c_str(), (fn + "_256RP.png").c_str()) == 0) {
-
-							//debug(viewsMapit->first.c_str());
-							std::pair<Graphics::Surface*, const byte*> tmp = viewsMapit->second;
-							listEntry.viewpng = tmp.first;
-							//debug("RELOADED FROM RAM");
-							listEntry.viewenh = tmp.second;
-							if (listEntry.viewenh) {
-								preloaded = true;
-								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-								listEntry.viewEnhanced = true;
-								listEntry.enhancedIs256 = true;
-							}
-						}
-				    }
-			    if (!preloaded) {
-
-				    if (!extraDIRList.empty()) {
-						if (fileIsInExtraDIR((fn + ".png").c_str())) {
-							if (!listEntry.viewEnhanced) {
-								Common::String fileName = fn + ".png";
-								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-								if (!file) {
-									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-								} else {
-									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-									Graphics::Surface *viewpngtmp = loadCelPNG(file);
-									listEntry.viewpng = viewpngtmp;
-									if (listEntry.viewpng) {
-										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-										listEntry.viewenh = viewenhtmp;
-										if (listEntry.viewenh) {
-											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-											listEntry.viewEnhanced = true;
-											listEntry.enhancedIs256 = (listEntry.viewpng->format != Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-											std::pair<Graphics::Surface *, const byte *> tmp;
-											tmp.first = viewpngtmp;
-											tmp.second = viewenhtmp;
-											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + ".png").c_str(), tmp));
-											//debug(fn.c_str());
-											//debug("LOADED FROM DISC");
-										}
-									}
-								}
-							}
-						} else if (fileIsInExtraDIR((fn + "_256.png").c_str())) {
-							if (!listEntry.viewEnhanced) {
-								Common::String fileName = fn + "_256.png";
-								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-								if (!file) {
-									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-								} else {
-									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-									Graphics::Surface *viewpngtmp = loadCelPNGCLUT(file);
-									listEntry.viewpng = viewpngtmp;
-									if (listEntry.viewpng) {
-										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-										listEntry.viewenh = viewenhtmp;
-										if (listEntry.viewenh) {
-											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-											listEntry.viewEnhanced = true;
-											listEntry.enhancedIs256 = true;
-											std::pair<Graphics::Surface *, const byte *> tmp;
-											tmp.first = viewpngtmp;
-											tmp.second = viewenhtmp;
-											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256.png").c_str(), tmp));
-											//debug(fn.c_str());
-											//debug("LOADED FROM DISC");
-										}
-									}
-								}
-							}
-						} else if (fileIsInExtraDIR((fn + "_256RP.png").c_str())) {
-							if (!listEntry.viewEnhanced) {
-								Common::String fileName = fn + "_256RP.png";
-								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-								if (!file) {
-									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-								} else {
-									//debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-									Graphics::Surface *viewpngtmp = loadCelPNGCLUTOverride(file);
-									listEntry.viewpng = viewpngtmp;
-									if (listEntry.viewpng) {
-										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-										listEntry.viewenh = viewenhtmp;
-										if (listEntry.viewenh) {
-											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-											listEntry.viewEnhanced = true;
-											listEntry.enhancedIs256 = true;
-											std::pair<Graphics::Surface *, const byte *> tmp;
-											tmp.first = viewpngtmp;
-											tmp.second = viewenhtmp;
-											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256RP.png").c_str(), tmp));
-											//debug(fn.c_str());
-											//debug("LOADED FROM DISC");
-										}
-									}
-								}
-							}
-						}
-					}
-				    }
-			    }
-		    }
-
-	    _list.push_back(listEntry);
-
-	    curAddress = curNode->succ;
-	    curNode = _s->_segMan->lookupNode(curAddress);
-    }
 
 	// Possible TODO: As noted in the comment in sortHelper we actually
 	// require a stable sorting algorithm here. Since Common::sort is not stable
@@ -668,7 +251,6 @@ void GfxAnimate::LoadAllExtraPNG() {
 
 	// Now sort the list according y and z (descending)
 	Common::sort(_list.begin(), _list.end(), sortHelper);
-	_newList.clear();
 }
 
 void GfxAnimate::fill(byte &old_picNotValid) {
@@ -781,36 +363,7 @@ void GfxAnimate::setNsRect(GfxView *view, AnimateList::iterator it) {
 
 	// Create rect according to coordinates and given cel
 	if (it->scaleSignal & kScaleSignalDoScaling) {
-		if ((!g_sci->enhanced_DEPTH && !g_sci->depth_rendering) || (!g_sci->enhanced_DEPTH && !g_sci->stereo_pair_rendering)) {
-			if (!it->viewEnhanced) {
-				view->getCelScaledRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
-			} else {
-				view->getCelScaledRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
-			}
-		} else {
-
-			
-
-				if (g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X && (((int16)g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier)) > 16 && (((int16)g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier)) < g_sci->_gfxScreen->getScriptWidth() - 16) {
-
-					if (!it->viewEnhanced) {
-						view->getCelScaledRect(it->loopNo, it->celNo, (((int16)g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier)), ((int16)g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier), it->z, it->scaleX, it->scaleY, it->celRect);
-					} else {
-						view->getCelScaledRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, (((int16)g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier)), ((int16)g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier), it->z, it->scaleX, it->scaleY, it->celRect);
-					}
-					it->celRect.clip(_ports->_curPort->rect);
-					it->bitsRect.clip(_ports->_curPort->rect);
-				} else {
-					if (!it->viewEnhanced) {
-						view->getCelScaledRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
-					} else {
-						view->getCelScaledRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
-					}
-					it->celRect.clip(_ports->_curPort->rect);
-					it->bitsRect.clip(_ports->_curPort->rect);
-				}
-			
-		}
+		view->getCelScaledRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
 		// when being scaled, only set nsRect, if object will get drawn
 		if ((it->signal & kSignalHidden) && !(it->signal & kSignalAlwaysUpdate))
 			shouldSetNsRect = false;
@@ -822,65 +375,12 @@ void GfxAnimate::setNsRect(GfxView *view, AnimateList::iterator it) {
 			view->getCelSpecialHoyle4Rect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
 			shouldSetNsRect = false;
 		} else {
-			if (!g_sci->enhanced_DEPTH || !g_sci->depth_rendering) {
-				if (!it->viewEnhanced) {
-					view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-					view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-				} else {
-					view->getCelRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-					view->getCelRectEnhancedBits(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-					it->bitsRect.clip(_ports->_curPort->rect);
-				}
-			} else {
-				if (it->signal & kSignalNoUpdate) {
-					if (!it->viewEnhanced) {
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-					} else {
-						view->getCelRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-						view->getCelRectEnhancedBits(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-						it->bitsRect.clip(_ports->_curPort->rect);
-					}
-				} else {
-				
-				if (it->x > 0 && it->x < g_sci->_gfxScreen->_scriptWidth && it->y > 0 && it->y < g_sci->_gfxScreen->_scriptHeight) {
-
-					if (!it->viewEnhanced) {
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-						view->getCelRect(it->loopNo, it->celNo, (int16)clip((int)(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, (it->y - (it->celRect.height() / 2)) * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier), 0, (int)(g_sci->_gfxScreen->_scriptWidth)), (int16)clip(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier, 0, (int)(g_sci->_gfxScreen->_scriptHeight)), it->z, it->celRect);
-						view->getCelRect(it->loopNo, it->celNo, (int16)clip((int)(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, (it->y - (it->celRect.height() / 2)) * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier), 0, (int)(g_sci->_gfxScreen->_scriptWidth)), (int16)clip(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier, 0, (int)(g_sci->_gfxScreen->_scriptHeight)), it->z, it->bitsRect);
-					} else {
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-						view->getCelRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, (int16)clip((int)(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, (it->y - (it->celRect.height() / 2)) * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier), 0, (int)(g_sci->_gfxScreen->_scriptWidth)), (int16)clip(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier, 0, (int)(g_sci->_gfxScreen->_scriptHeight)), it->z, it->celRect);
-						view->getCelRectEnhancedBits(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, (int16)clip((int)(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_X, it->x * g_sci->_enhancementMultiplier, (it->y - (it->celRect.height() / 2)) * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier), 0, (int)(g_sci->_gfxScreen->_scriptWidth)), (int16)clip(g_sci->_gfxScreen->getDepthShift(g_sci->_gfxScreen->_displayScreenDEPTH_SHIFT_Y, it->x * g_sci->_enhancementMultiplier, it->y * g_sci->_enhancementMultiplier) / g_sci->_enhancementMultiplier, 0, (int)(g_sci->_gfxScreen->_scriptHeight)), it->z, it->bitsRect);
-						
-						it->bitsRect.clip(_ports->_curPort->rect);
-					}
-					
-				} else {
-					if (!it->viewEnhanced) {
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-						view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-					} else {
-						view->getCelRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-						view->getCelRectEnhancedBits(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-						
-						it->bitsRect.clip(_ports->_curPort->rect);
-					}
-				}
-				}
-			}
+			view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
 		}
 	}
 
 	if (shouldSetNsRect) {
-		if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400) {
-			g_sci->_gfxCompare->setNSRect(it->object, it->bitsRect);
-		} else {
-			g_sci->_gfxCompare->setNSRect(it->object, it->celRect);
-		}
+		g_sci->_gfxCompare->setNSRect(it->object, it->celRect);
 	}
 }
 
@@ -891,51 +391,38 @@ void GfxAnimate::update() {
 	const AnimateList::iterator end = _list.end();
 
 	// Remove all no-update cels, if requested
-	if (!g_sci->enhanced_DEPTH || !g_sci->depth_rendering) {
-		if (!g_sci->backgroundIsVideo && !g_sci->play_enhanced_BG_anim) {
-			for (it = _list.reverse_begin(); it != end; --it) {
-				if (it->signal & kSignalNoUpdate) {
-					if (!(it->signal & kSignalRemoveView)) {
-						bitsHandle = readSelector(_s->_segMan, it->object, SELECTOR(underBits));
-						if (_screen->_picNotValid != 1) {
-							_paint16->bitsRestore(bitsHandle);
-							it->showBitsFlag = true;
-						} else {
-							_paint16->bitsFree(bitsHandle);
-						}
-						writeSelectorValue(_s->_segMan, it->object, SELECTOR(underBits), 0);
-					}
-					it->signal &= ~kSignalForceUpdate;
-					if (it->signal & kSignalViewUpdated)
-						it->signal &= ~(kSignalViewUpdated | kSignalNoUpdate);
-				} else if (it->signal & kSignalStopUpdate) {
-					it->signal &= ~kSignalStopUpdate;
-					it->signal |= kSignalNoUpdate;
+	for (it = _list.reverse_begin(); it != end; --it) {
+		if (it->signal & kSignalNoUpdate) {
+			if (!(it->signal & kSignalRemoveView)) {
+				bitsHandle = readSelector(_s->_segMan, it->object, SELECTOR(underBits));
+				if (_screen->_picNotValid != 1) {
+					_paint16->bitsRestore(bitsHandle);
+					it->showBitsFlag = true;
+				} else	{
+					_paint16->bitsFree(bitsHandle);
 				}
+				writeSelectorValue(_s->_segMan, it->object, SELECTOR(underBits), 0);
 			}
+			it->signal &= ~kSignalForceUpdate;
+			if (it->signal & kSignalViewUpdated)
+				it->signal &= ~(kSignalViewUpdated | kSignalNoUpdate);
+		} else if (it->signal & kSignalStopUpdate) {
+			it->signal &= ~kSignalStopUpdate;
+			it->signal |= kSignalNoUpdate;
 		}
 	}
-	
+
 	// Draw always-update cels
 	for (it = _list.begin(); it != end; ++it) {
-
 		if (it->signal & kSignalAlwaysUpdate) {
-
 			// draw corresponding cel
-			_paint16->drawCel(it->viewpng, it->viewenh, it->pixelsLength, it->viewEnhanced, it->enhancedIs256, it->viewId, it->loopNo, it->celNo, 0, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
+			_paint16->drawCel(it->viewId, it->loopNo, it->celNo, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
 			it->showBitsFlag = true;
-			
-				
 
-				
-			
 			it->signal &= ~(kSignalStopUpdate | kSignalViewUpdated | kSignalNoUpdate | kSignalForceUpdate);
 			if (!(it->signal & kSignalIgnoreActor)) {
-				
-					rect = it->celRect;
-				
+				rect = it->celRect;
 				rect.top = CLIP<int16>(_ports->kernelPriorityToCoordinate(it->priority) - 1, rect.top, rect.bottom - 1);
-				
 				_paint16->fillRect(rect, GFX_SCREEN_MASK_CONTROL, 0, 0, 15);
 			}
 		}
@@ -948,19 +435,11 @@ void GfxAnimate::update() {
 				it->signal |= kSignalRemoveView;
 			} else {
 				it->signal &= ~kSignalRemoveView;
-				if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400) {
-					if (it->signal & kSignalIgnoreActor)
-						bitsHandle = _paint16->bitsSave(it->bitsRect, GFX_SCREEN_MASK_VISUAL | GFX_SCREEN_MASK_PRIORITY);
-					else
-						bitsHandle = _paint16->bitsSave(it->bitsRect, GFX_SCREEN_MASK_ALL);
-					writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
-				} else {
-					if (it->signal & kSignalIgnoreActor)
-						bitsHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_VISUAL | GFX_SCREEN_MASK_PRIORITY);
-					else
-						bitsHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_ALL);
-					writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
-				}
+				if (it->signal & kSignalIgnoreActor)
+					bitsHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_VISUAL|GFX_SCREEN_MASK_PRIORITY);
+				else
+					bitsHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_ALL);
+				writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
 			}
 		}
 	}
@@ -969,9 +448,7 @@ void GfxAnimate::update() {
 	for (it = _list.begin(); it != end; ++it) {
 		if (it->signal & kSignalNoUpdate && !(it->signal & kSignalHidden)) {
 			// draw corresponding cel
-			
-			_paint16->drawCel(it->viewpng, it->viewenh, it->pixelsLength, it->viewEnhanced, it->enhancedIs256, it->viewId, it->loopNo, it->celNo, 0, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
-
+			_paint16->drawCel(it->viewId, it->loopNo, it->celNo, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
 			it->showBitsFlag = true;
 
 			if (!(it->signal & kSignalIgnoreActor)) {
@@ -981,235 +458,22 @@ void GfxAnimate::update() {
 			}
 		}
 	}
-	
-
 }
 
 void GfxAnimate::drawCels() {
-
-	int16 calcAvgPosX = 0;
-	int16 calcAvgPosY = 0;
-	int16 numberOfViews = 0;
-	AnimateList::iterator itxy;
-	const AnimateList::iterator endxy = _list.end();
-	for (itxy = _list.begin(); itxy != endxy; ++itxy) {
-		if (!(itxy->signal & kSignalNoUpdate) && !(itxy->signal & kSignalHidden) && !(itxy->signal & kSignalFrozen)) {
-			calcAvgPosX += itxy->x;
-			calcAvgPosY += itxy->y;
-
-			numberOfViews++;
-		}
-	}
-
-	if (numberOfViews > 0) {
-		Common::Point p;
-		if (g_sci->avgViewPos.size() >= 29) {
-			for (int n = 29; n < g_sci->avgViewPos.size(); n++) {
-				g_sci->avgViewPos.erase(g_sci->avgViewPos.begin());
-			}
-		}
-		p.x = (int)clip(((float)((float)calcAvgPosX / (float)numberOfViews)), 0, g_sci->_gfxScreen->_scriptWidth);
-		p.y = (int)clip(((float)((float)calcAvgPosY / (float)numberOfViews)), 0, g_sci->_gfxScreen->_scriptHeight);
-		
-		
-			for (int n = g_sci->avgViewPos.size(); n < 30; n++) {
-				g_sci->avgViewPos.push_back(p);
-			}
-		
-	}
-	if (g_sci->avgViewPos.size() > 0) {
-
-		for (std::list<Common::Point>::iterator itavp = g_sci->avgViewPos.begin(); itavp != g_sci->avgViewPos.end(); ++itavp) {
-			g_sci->viewLookPos.x += itavp->x;
-			g_sci->viewLookPos.y += itavp->y;
-		}
-		g_sci->viewLookPos.x /= g_sci->avgViewPos.size();
-		g_sci->viewLookPos.y /= g_sci->avgViewPos.size();
-		g_sci->viewLookPos.x *= g_sci->_enhancementMultiplier;
-		g_sci->viewLookPos.y *= g_sci->_enhancementMultiplier;
-	}
-	if (g_sci->depth_rendering)
-	if (g_sci->enhanced_DEPTH) {
-		g_sci->_gfxScreen->renderFrameDepthFirst((g_sci->mouseLookPos.x - (g_sci->_gfxScreen->_displayWidth / 2)) + ((g_sci->viewLookPos.x - (g_sci->_gfxScreen->_displayWidth / 2))*4.000f), (g_sci->mouseLookPos.y - (g_sci->_gfxScreen->_displayHeight / 2)) + ((g_sci->viewLookPos.y - (g_sci->_gfxScreen->_displayHeight / 2))*4.000f));
-	}
-	
 	reg_t bitsHandle;
 	AnimateList::iterator it;
 	const AnimateList::iterator end = _list.end();
 	_lastCastData.clear();
-	if (!playingVideoCutscenes) {
-		EngineState *s = g_sci->getEngineState();
-		if (!g_sci->backgroundIsVideo) {
-			//every2ndFrame = !every2ndFrame;
-			//if (every2ndFrame)
-			{
-				if (g_system->getMillis() - s->_screenUpdateTime >= (1000 / 30) * 2) {
 
-					int16 frameDrop = (int)((g_system->getMillis() - s->_screenUpdateTime) / (1000 / 30));
-					if (frameDrop > 0) {
-						g_sci->enhanced_bg_frame += frameDrop;
-					}
-				}
-				g_sci->enhanced_bg_frame++;
-				//reg_t screenBits = g_sci->_gfxPaint16->bitsSave(g_sci->_gfxPorts->_picWind->rect, 1 | 2);
-				//debug("ANIMATING PIC BACKGROUND!");
-				//g_sci->dontUpdate = true;
-				
-
-				if (g_sci->play_enhanced_BG_anim) {
-					if (g_sci->prevPictureId != NULL) {
-						//if (g_sci->_gfxPorts->_curPort->top == 10)
-						{
-							//g_sci->_gfxPorts->beginUpdate(g_sci->_gfxPorts->_picWind);
-							g_sci->_gfxPaint16->drawPicture(g_sci->prevPictureId, g_sci->prevMirroredFlag, true, (GuiResourceId)g_sci->prevPaletteId);
-							//Common::Rect _animDrawArea = Common::Rect(0, 0, g_sci->_gfxScreen->getScriptWidth(), g_sci->_gfxScreen->getScriptHeight());
-							//g_sci->_gfxAnimate->reAnimate(_animDrawArea);
-							//g_sci->_gfxPaint16->bitsRestore(g_sci->menuSaveBits);
-							//g_sci->_gfxPorts->endUpdate(g_sci->_gfxPorts->_picWind);
-						}
-					}
-					//Common::Rect _animDrawArea = g_sci->_gfxPorts->getPort()->rect;
-					//_animDrawArea.bottom = g_sci->_gfxPorts->_picWind->rect.top;
-					//_animDrawArea.top = 0;
-					//g_sci->_gfxPaint16->fillRect(_animDrawArea, 1, g_sci->_gfxScreen->getColorWhite());
-					//g_sci->bitsHandleMenu = g_sci->_gfxPaint16->bitsSave(g_sci->_gfxPorts->_curPort->rect, 1 | 2);
-					//g_sci->sleep(10);
-					//if (getSciVersion() >= SCI_VERSION_1_EARLY)
-					//g_sci->_gfxScreen->_picNotValid = 1;
-					//g_sci->_gfxAnimate->reAnimate(g_sci->_gfxPorts->_currentViewPort);
-					
-					//g_sci->_gfxPaint16->bitsShow(g_sci->_gfxPorts->getPort()->rect);
-
-					//	g_sci->_gfxPaint16->bitsRestore(screenBits);
-					//g_sci->_gfxPaint16->bitsRestore(g_sci->bitsHandleMenu);
-					//g_sci->dontUpdate = true;
-				}
-			}
-			//reAnimate(_ports->_curPort->rect);
-		} else {
-			if (!playingVideoCutscenes) {
-
-				// Throttle the checking of shouldQuit() to 60fps as well, since
-				// Engine::shouldQuit() invokes 2 virtual functions
-				// (EventManager::shouldQuit() and EventManager::shouldReturnToLauncher()),
-				// which is very expensive to invoke constantly without any
-				// throttling at all.
-				if (g_system->getMillis() - s->_screenUpdateTime >= g_sci->_theoraDecoder->getTimeToNextFrame() * 2) {
-					if (g_sci->_theoraDecoder->getTimeToNextFrame() != 0) {
-						int16 frameDrop = (int)((g_system->getMillis() - s->_screenUpdateTime) / g_sci->_theoraDecoder->getTimeToNextFrame());
-						if (frameDrop > 0) {
-							g_sci->_theoraDecoder->seekToFrame(g_sci->_theoraDecoder->getCurFrame() + frameDrop);
-						}
-					}
-				}
-
-				if (g_sci->prevPictureId != NULL) {
-					//if (g_sci->_gfxPorts->_curPort->top == 10)
-					{
-						if (g_system->getMillis() - s->_screenUpdateTime >= g_sci->_theoraDecoder->getTimeToNextFrame()) {
-
-							s->_screenUpdateTime = g_system->getMillis();
-							if (g_sci->_theoraDecoder->getCurFrame() == -1) {
-								//g_sci->_theoraDecoder->decodeNextFrame();
-							} else {
-								//g_sci->_theoraSurface = g_sci->_theoraDecoder->decodeNextFrame();
-
-								//if (g_sci->_theoraSurface != nullptr)
-								{
-									if (g_sci->prevPictureId != NULL) {
-										//g_sci->_gfxPorts->beginUpdate(g_sci->_gfxPorts->_picWind);
-										g_sci->_gfxPaint16->drawPicture(g_sci->prevPictureId, g_sci->prevMirroredFlag, true, (GuiResourceId)g_sci->prevPaletteId);
-										//Common::Rect _animDrawArea = Common::Rect(0, 0, g_sci->_gfxScreen->getScriptWidth(), g_sci->_gfxScreen->getScriptHeight());
-										//g_sci->_gfxAnimate->reAnimate(_animDrawArea);
-										//g_sci->_gfxPaint16->bitsRestore(g_sci->menuSaveBits);
-										//g_sci->_gfxPorts->endUpdate(g_sci->_gfxPorts->_picWind);
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
 	for (it = _list.begin(); it != end; ++it) {
-		
-
-		
 		if (!(it->signal & (kSignalNoUpdate | kSignalHidden | kSignalAlwaysUpdate))) {
 			// Save background
-			//_paint16->frameRect(it->bitsRect);
-			if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400 || _screen->_upscaledHires == GFX_SCREEN_UPSCALED_320x200_X_EGA) {
-				// Save background
-				//_paint16->frameRect(it->bitsRect);
-				if (it->bitsRect.left > it->bitsRect.right) {
-					int l = it->bitsRect.left;
-					it->bitsRect.left = it->bitsRect.right;
-					it->bitsRect.right = l;
-				}
-				if (it->bitsRect.top > it->bitsRect.bottom) {
-					int t = it->bitsRect.top;
-					it->bitsRect.top = it->bitsRect.bottom;
-					it->bitsRect.bottom = t;
-				}
-				bitsHandle = _paint16->bitsSave(it->bitsRect, GFX_SCREEN_MASK_ALL);
-				writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
-				// draw corresponding cel
-			} else {
-				// Save background
-				//_paint16->frameRect(it->bitsRect);
-				if (it->celRect.left > it->celRect.right) {
-					int l = it->celRect.left;
-					it->celRect.left = it->celRect.right;
-					it->celRect.right = l;
-				}
-				if (it->celRect.top > it->celRect.bottom) {
-					int t = it->celRect.top;
-					it->celRect.top = it->celRect.bottom;
-					it->celRect.bottom = t;
-				}
-				bitsHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_ALL);
-				writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
-			}
-			if (it->signal & kSignalNoUpdate) {
-				// Save background
-				//_paint16->frameRect(it->bitsRect);
-				if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400 || _screen->_upscaledHires == GFX_SCREEN_UPSCALED_320x200_X_EGA) {
-					// Save background
-					//_paint16->frameRect(it->bitsRect);
-					if (it->bitsRect.left > it->bitsRect.right) {
-						int l = it->bitsRect.left;
-						it->bitsRect.left = it->bitsRect.right;
-						it->bitsRect.right = l;
-					}
-					if (it->bitsRect.top > it->bitsRect.bottom) {
-						int t = it->bitsRect.top;
-						it->bitsRect.top = it->bitsRect.bottom;
-						it->bitsRect.bottom = t;
-					}
-					bitsHandle = _paint16->bitsSave(it->bitsRect, GFX_SCREEN_MASK_ALL);
-					writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
-					// draw corresponding cel
-				} else {
-					// Save background
-					//_paint16->frameRect(it->bitsRect);
-					if (it->celRect.left > it->celRect.right) {
-						int l = it->celRect.left;
-						it->celRect.left = it->celRect.right;
-						it->celRect.right = l;
-					}
-					if (it->celRect.top > it->celRect.bottom) {
-						int t = it->celRect.top;
-						it->celRect.top = it->celRect.bottom;
-						it->celRect.bottom = t;
-					}
-					bitsHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_ALL);
-					writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
-				}
-			}
+			bitsHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_ALL);
+			writeSelector(_s->_segMan, it->object, SELECTOR(underBits), bitsHandle);
 
-				_paint16->drawCel(it->viewpng, it->viewenh, it->pixelsLength, it->viewEnhanced, it->enhancedIs256, it->viewId, it->loopNo, it->celNo, 0, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY, it->scaleSignal);
-
+			// draw corresponding cel
+			_paint16->drawCel(it->viewId, it->loopNo, it->celNo, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY, it->scaleSignal);
 			it->showBitsFlag = true;
 
 			if (it->signal & kSignalRemoveView)
@@ -1222,125 +486,43 @@ void GfxAnimate::drawCels() {
 }
 
 void GfxAnimate::updateScreen(byte oldPicNotValid) {
+	AnimateList::iterator it;
+	const AnimateList::iterator end = _list.end();
+	Common::Rect lsRect;
+	Common::Rect workerRect;
 
-	if (!playingVideoCutscenes) {
-		AnimateList::iterator it;
-		const AnimateList::iterator end = _list.end();
-		Common::Rect lsRect;
-		Common::Rect workerRect;
-		if (workerRect.left > workerRect.right) {
-			int l = workerRect.left;
-			workerRect.left = workerRect.right;
-			workerRect.right = l;
-		}
-		if (workerRect.top > workerRect.bottom) {
-			int t = workerRect.top;
-			workerRect.top = workerRect.bottom;
-			workerRect.bottom = t;
-		}
-		for (it = _list.begin(); it != end; ++it) {
-			if (it->showBitsFlag || !(it->signal & (kSignalRemoveView | kSignalNoUpdate) ||
-			                          (!(it->signal & kSignalRemoveView) && (it->signal & kSignalNoUpdate) && oldPicNotValid))) {
-				lsRect.left = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsLeft)) / 2;
-				lsRect.top = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsTop)) / 2;
-				lsRect.right = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsRight)) / 2;
-				lsRect.bottom = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsBottom)) / 2;
-				if (it->celRect.left > it->celRect.right) {
-					int l = it->celRect.left;
-					it->celRect.left = it->celRect.right;
-					it->celRect.right = l;
-				}
-				if (it->celRect.top > it->celRect.bottom) {
-					int t = it->celRect.top;
-					it->celRect.top = it->celRect.bottom;
-					it->celRect.bottom = t;
-				}
-				if (it->bitsRect.left > it->bitsRect.right) {
-					int l = it->bitsRect.left;
-					it->bitsRect.left = it->bitsRect.right;
-					it->bitsRect.right = l;
-				}
-				if (it->bitsRect.top > it->bitsRect.bottom) {
-					int t = it->bitsRect.top;
-					it->bitsRect.top = it->bitsRect.bottom;
-					it->bitsRect.bottom = t;
-				}
+	for (it = _list.begin(); it != end; ++it) {
+		if (it->showBitsFlag || !(it->signal & (kSignalRemoveView | kSignalNoUpdate) ||
+										(!(it->signal & kSignalRemoveView) && (it->signal & kSignalNoUpdate) && oldPicNotValid))) {
+			lsRect.left = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsLeft));
+			lsRect.top = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsTop));
+			lsRect.right = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsRight));
+			lsRect.bottom = readSelectorValue(_s->_segMan, it->object, SELECTOR(lsBottom));
 
-				if (lsRect.left > lsRect.right) {
-					int l = lsRect.left;
-					lsRect.left = lsRect.right;
-					lsRect.right = l;
-				}
-				if (lsRect.top > lsRect.bottom) {
-					int t = lsRect.top;
-					lsRect.top = lsRect.bottom;
-					lsRect.bottom = t;
-				}
+			workerRect = lsRect;
+			workerRect.clip(it->celRect);
+
+			if (!workerRect.isEmpty()) {
 				workerRect = lsRect;
-
-				workerRect.clip(it->bitsRect);
-
-				if (!workerRect.isEmpty()) {
-					workerRect = lsRect;
-					if (workerRect.left > workerRect.right) {
-						int l = workerRect.left;
-						workerRect.left = workerRect.right;
-						workerRect.right = l;
-					}
-					if (workerRect.top > workerRect.bottom) {
-						int t = workerRect.top;
-						workerRect.top = workerRect.bottom;
-						workerRect.bottom = t;
-					}
-					if (_screen->_upscaledHires != GFX_SCREEN_UPSCALED_640x400) {
-						workerRect.extend(it->celRect);
-					} else {
-						workerRect.extend(it->bitsRect);
-					}
-				} else {
-					_paint16->bitsShow(lsRect);
-					workerRect = it->bitsRect;
-				}
-				if (_screen->_upscaledHires != GFX_SCREEN_UPSCALED_640x400) {
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsLeft), it->celRect.left);
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsTop), it->celRect.top);
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsRight), it->celRect.right);
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsBottom), it->celRect.bottom); /// UNDO TO HERE
-				} else {
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsLeft), it->bitsRect.left);
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsTop), it->bitsRect.top);
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsRight), it->bitsRect.right);
-					writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsBottom), it->bitsRect.bottom);
-				}
-				// may get used for debugging
-				//_paint16->frameRect(workerRect); // should be //!
-				_paint16->bitsShow(workerRect);
-
-				if (it->signal & kSignalHidden)
-					it->signal |= kSignalRemoveView;
+				workerRect.extend(it->celRect);
+			} else {
+				_paint16->bitsShow(lsRect);
+				workerRect = it->celRect;
 			}
-		}
-		// use this for debug purposes
-		/*
-	if (g_sci->backgroundIsVideo)
-	{	
-		reAnimate(_ports->_curPort->rect);
-		//_screen->convertToRGB(_ports->_curPort->rect);
-	}
-	if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400) {
-		
-		
-	}*/
-		//_screen->convertToRGB(_ports->_curPort->rect);
-		
-		reAnimate(_ports->_curPort->rect);
-		// 2. Convert to RGB
-		//_screen->convertToRGB(_ports->_curPort->rect);
+			writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsLeft), it->celRect.left);
+			writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsTop), it->celRect.top);
+			writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsRight), it->celRect.right);
+			writeSelectorValue(_s->_segMan, it->object, SELECTOR(lsBottom), it->celRect.bottom);
+			// may get used for debugging
+			//_paint16->frameRect(workerRect);
+			_paint16->bitsShow(workerRect);
 
-		// 3. Copy to screen
-		//g_system->copyRectToScreen(_screen->_rgbScreen + ((_ports->_curPort->rect.top * _screen->_displayWidth) + _ports->_curPort->rect.left) * _screen->_format.bytesPerPixel, _screen->_displayWidth * _screen->_format.bytesPerPixel, _ports->_curPort->rect.left, _ports->_curPort->rect.top, _ports->_curPort->rect.width(), _ports->_curPort->rect.height());
+			if (it->signal & kSignalHidden)
+				it->signal |= kSignalRemoveView;
+		}
 	}
-	
+	// use this for debug purposes
+	// _screen->copyToScreen();
 }
 
 void GfxAnimate::restoreAndDelete(int argc, reg_t *argv) {
@@ -1367,184 +549,18 @@ void GfxAnimate::restoreAndDelete(int argc, reg_t *argv) {
 
 		if (it->signal & kSignalDisposeMe) {
 			// Call .delete_ method of that object
-			if (g_sci->stereoscopic) {
-				if (g_sci->stereoRightEye) {
-					invokeSelector(_s, it->object, SELECTOR(delete_), argc, argv, 0);
-				}
-			} else {
-				invokeSelector(_s, it->object, SELECTOR(delete_), argc, argv, 0);
-			}
+			invokeSelector(_s, it->object, SELECTOR(delete_), argc, argv, 0);
 		}
 	}
 }
 
 void GfxAnimate::reAnimate(Common::Rect rect) {
-
 	if (!_lastCastData.empty()) {
 		AnimateArray::iterator it;
 		AnimateArray::iterator end = _lastCastData.end();
 		for (it = _lastCastData.begin(); it != end; ++it) {
-			if (_screen->_upscaledHires == GFX_SCREEN_UPSCALED_640x400) {
-				it->castHandle = _paint16->bitsSave(it->bitsRect, GFX_SCREEN_MASK_VISUAL | GFX_SCREEN_MASK_PRIORITY);
-			} else {
-				it->castHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_VISUAL | GFX_SCREEN_MASK_PRIORITY);
-			}
-			if (g_sci->enhanced_gfx_enabled) {
-				Common::FSNode folder;
-
-				if (ConfMan.hasKey("extrapath")) {
-					char viewstrbuffer[32];
-					int retVal, buf_size = 32;
-					retVal = snprintf(viewstrbuffer, buf_size, "view.%u.%u.%u", it->viewId, it->loopNo, it->celNo);
-					Common::String fn = viewstrbuffer;
-
-					if (g_sci->stereoscopic && g_sci->stereoRightEye) {
-						if (fileIsInExtraDIR((fn + ".reye.png").c_str()))
-							fn += ".reye";
-					}
-
-					bool preloaded = false;
-					if (it->viewpng == NULL) {
-						if (viewsMap.size() > 0)
-							for (viewsMapit = viewsMap.begin();
-							     viewsMapit != viewsMap.end(); ++viewsMapit) {
-
-								if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
-
-									//debug(viewsMapit->first.c_str());
-									std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
-									it->viewpng = tmp.first;
-									//debug("RELOADED FROM RAM");
-									it->viewenh = tmp.second;
-									if (it->viewenh) {
-										preloaded = true;
-										it->pixelsLength = it->viewpng->w * it->viewpng->h;
-										it->viewEnhanced = true;
-										it->enhancedIs256 = false;
-									}
-								}
-							if (strcmp(viewsMapit->first.c_str(), (fn + "_256.png").c_str()) == 0) {
-
-									//debug(viewsMapit->first.c_str());
-									std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
-									it->viewpng = tmp.first;
-									//debug("RELOADED FROM RAM");
-									it->viewenh = tmp.second;
-									if (it->viewenh) {
-										preloaded = true;
-										it->pixelsLength = it->viewpng->w * it->viewpng->h;
-										it->viewEnhanced = true;
-										it->enhancedIs256 = true;
-									}
-								}
-							if (strcmp(viewsMapit->first.c_str(), (fn + "_256RP.png").c_str()) == 0) {
-
-									//debug(viewsMapit->first.c_str());
-									std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
-									it->viewpng = tmp.first;
-									//debug("RELOADED FROM RAM");
-									it->viewenh = tmp.second;
-									if (it->viewenh) {
-										preloaded = true;
-										it->pixelsLength = it->viewpng->w * it->viewpng->h;
-										it->viewEnhanced = true;
-										it->enhancedIs256 = true;
-									}
-								}
-							}
-						if (!preloaded) {
-							if (!extraDIRList.empty()) {
-								if (fileIsInExtraDIR((fn + ".png").c_str())) {
-									if (!it->viewEnhanced) {
-										Common::String fileName = fn + ".png";
-										Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-										if (!file) {
-											//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-										} else {
-											////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-											Graphics::Surface *viewpngtmp = loadCelPNG(file);
-											it->viewpng = viewpngtmp;
-											if (it->viewpng) {
-												const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-												it->viewenh = viewenhtmp;
-												if (it->viewenh) {
-													it->pixelsLength = it->viewpng->w * it->viewpng->h;
-													it->viewEnhanced = true;
-													it->enhancedIs256 = false;
-													std::pair<Graphics::Surface *, const byte *> tmp;
-													tmp.first = viewpngtmp;
-													tmp.second = viewenhtmp;
-													viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + ".png").c_str(), tmp));
-													//debug(fn.c_str());
-													//debug("LOADED FROM DISC");
-												}
-											}
-										}
-									}
-								} else if (fileIsInExtraDIR((fn + "_256.png").c_str())) {
-									if (!it->viewEnhanced) {
-										Common::String fileName = fn + "_256.png";
-										Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-										if (!file) {
-											//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-										} else {
-											////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-											Graphics::Surface *viewpngtmp = loadCelPNGCLUT(file);
-											it->viewpng = viewpngtmp;
-											if (it->viewpng) {
-												const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-												it->viewenh = viewenhtmp;
-												if (it->viewenh) {
-													it->pixelsLength = it->viewpng->w * it->viewpng->h;
-													it->viewEnhanced = true;
-													it->enhancedIs256 = true;
-													std::pair<Graphics::Surface *, const byte *> tmp;
-													tmp.first = viewpngtmp;
-													tmp.second = viewenhtmp;
-													viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256.png").c_str(), tmp));
-													//debug(fn.c_str());
-													//debug("LOADED FROM DISC");
-												}
-											}
-										}
-									}
-								} else if (fileIsInExtraDIR((fn + "_256RP.png").c_str())) {
-									if (!it->viewEnhanced) {
-										Common::String fileName = fn + "_256RP.png";
-										Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-										if (!file) {
-											//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-										} else {
-											//debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-											Graphics::Surface *viewpngtmp = loadCelPNGCLUTOverride(file);
-											it->viewpng = viewpngtmp;
-											if (it->viewpng) {
-												const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-												it->viewenh = viewenhtmp;
-												if (it->viewenh) {
-													it->pixelsLength = it->viewpng->w * it->viewpng->h;
-													it->viewEnhanced = true;
-													it->enhancedIs256 = true;
-													std::pair<Graphics::Surface *, const byte *> tmp;
-													tmp.first = viewpngtmp;
-													tmp.second = viewenhtmp;
-													viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256RP.png").c_str(), tmp));
-													//debug(fn.c_str());
-													//debug("LOADED FROM DISC");
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			
-			
-			_paint16->drawCelNoUpdate(it->viewpng, it->viewenh, it->pixelsLength, it->viewEnhanced, it->enhancedIs256, it->viewId, it->loopNo, it->celNo, 0, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
-			
+			it->castHandle = _paint16->bitsSave(it->celRect, GFX_SCREEN_MASK_VISUAL|GFX_SCREEN_MASK_PRIORITY);
+			_paint16->drawCel(it->viewId, it->loopNo, it->celNo, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
 		}
 		_paint16->bitsShow(rect);
 		// restoring
@@ -1555,9 +571,7 @@ void GfxAnimate::reAnimate(Common::Rect rect) {
 	} else {
 		_paint16->bitsShow(rect);
 	}
-	
 }
-
 
 void GfxAnimate::addToPicDrawCels() {
 	reg_t curObject;
@@ -1587,31 +601,14 @@ void GfxAnimate::addToPicDrawCels() {
 			if (it->scaleSignal & kScaleSignalGlobalScaling) {
 				applyGlobalScaling(it, view);
 			}
-			if (!it->viewEnhanced) {
-				view->getCelScaledRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
-			} else {
-				view->getCelScaledRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
-			}
+			view->getCelScaledRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->scaleX, it->scaleY, it->celRect);
 			g_sci->_gfxCompare->setNSRect(curObject, it->celRect);
 		} else {
-			if (!it->viewEnhanced) {
-				view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-				view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-			} else {
-				view->getCelRectEnhanced(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
-				view->getCelRectEnhancedBits(it->viewpng, it->viewEnhanced, it->loopNo, it->celNo, it->x, it->y, it->z, it->bitsRect);
-				it->bitsRect.clip(_ports->_curPort->rect);
-			}
+			view->getCelRect(it->loopNo, it->celNo, it->x, it->y, it->z, it->celRect);
 		}
 
 		// draw corresponding cel
-		g_sci->stereoRightEye = false;
-		_paint16->drawCel(it->viewpng, it->viewenh, it->pixelsLength, it->viewEnhanced, it->enhancedIs256, view, it->loopNo, it->celNo, 0, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
-		if (g_sci->stereoscopic) {
-			g_sci->stereoRightEye = true;
-			_paint16->drawCel(it->viewpng, it->viewenh, it->pixelsLength, it->viewEnhanced, it->enhancedIs256, view, it->loopNo, it->celNo, 0, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
-			g_sci->stereoRightEye = false;
-		}
+		_paint16->drawCel(view, it->loopNo, it->celNo, it->celRect, it->priority, it->paletteNo, it->scaleX, it->scaleY);
 		if (!(it->signal & kSignalIgnoreActor)) {
 			it->celRect.top = CLIP<int16>(_ports->kernelPriorityToCoordinate(it->priority) - 1, it->celRect.top, it->celRect.bottom - 1);
 			_paint16->fillRect(it->celRect, GFX_SCREEN_MASK_CONTROL, 0, 0, 15);
@@ -1626,138 +623,9 @@ void GfxAnimate::addToPicDrawView(GuiResourceId viewId, int16 loopNo, int16 celN
 	if (priority == -1)
 		priority = _ports->kernelCoordinateToPriority(y);
 
-	AnimateEntry listEntry;
-	if (g_sci->enhanced_gfx_enabled) {
-		Common::FSNode folder;
-		if (ConfMan.hasKey("extrapath")) {
-			char viewstrbuffer[32];
-			int retVal, buf_size = 32;
-			retVal = snprintf(viewstrbuffer, buf_size, "view.%u.%u.%u", viewId, loopNo, celNo);
-			Common::String fn = viewstrbuffer;
-			
-			if (g_sci->stereoscopic && g_sci->stereoRightEye) {
-				if (fileIsInExtraDIR((fn + ".reye.png").c_str()))
-					fn += ".reye";
-			}
-
-			bool preloaded = false;
-			if (g_sci->stereoscopic && g_sci->stereoRightEye) {
-				if (fileIsInExtraDIR((fn + ".reye.png").c_str()))
-					fn += ".reye";
-			}
-			if (listEntry.viewpng == NULL) {
-				if (viewsMap.size() > 0)
-					for (viewsMapit = viewsMap.begin();
-					     viewsMapit != viewsMap.end(); ++viewsMapit) {
-
-						if (strcmp(viewsMapit->first.c_str(), (fn + ".png").c_str()) == 0) {
-
-							//debug(viewsMapit->first.c_str());
-							std::pair<Graphics::Surface *, const byte *> tmp = viewsMapit->second;
-							listEntry.viewpng = tmp.first;
-							//debug("RELOADED FROM RAM");
-
-							listEntry.viewenh = tmp.second;
-							if (listEntry.viewenh) {
-								preloaded = true;
-								listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-								listEntry.viewEnhanced = true;
-								listEntry.enhancedIs256 = (listEntry.viewpng->format != Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-							}
-						}
-					}
-				if (!preloaded) {
-					if (!extraDIRList.empty()) {
-						if (fileIsInExtraDIR((fn + ".png").c_str())) {
-							if (!listEntry.viewEnhanced) {
-								Common::String fileName = fn + ".png";
-								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-								if (!file) {
-									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-								} else {
-									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-									Graphics::Surface *viewpngtmp = loadCelPNG(file);
-									listEntry.viewpng = viewpngtmp;
-									if (listEntry.viewpng) {
-										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-										listEntry.viewenh = viewenhtmp;
-										if (listEntry.viewenh) {
-											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-											listEntry.viewEnhanced = true;
-											listEntry.enhancedIs256 = (listEntry.viewpng->format != Graphics::PixelFormat(4, 8, 8, 8, 8, 0, 8, 16, 24));
-											std::pair<Graphics::Surface *, const byte *> tmp;
-											tmp.first = viewpngtmp;
-											tmp.second = viewenhtmp;
-											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + ".png").c_str(), tmp));
-											//debug(fn.c_str());
-											//debug("LOADED FROM DISC");
-										}
-									}
-								}
-							}
-						} else if (fileIsInExtraDIR((fn + "_256.png").c_str())) {
-							if (!listEntry.viewEnhanced) {
-								Common::String fileName = fn + "_256.png";
-								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-								if (!file) {
-									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-								} else {
-									////debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-									Graphics::Surface *viewpngtmp = loadCelPNGCLUT(file);
-									listEntry.viewpng = viewpngtmp;
-									if (listEntry.viewpng) {
-										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-										listEntry.viewenh = viewenhtmp;
-										if (listEntry.viewenh) {
-											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-											listEntry.viewEnhanced = true;
-											listEntry.enhancedIs256 = true;
-											std::pair<Graphics::Surface *, const byte *> tmp;
-											tmp.first = viewpngtmp;
-											tmp.second = viewenhtmp;
-											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256.png").c_str(), tmp));
-											//debug(fn.c_str());
-											//debug("LOADED FROM DISC");
-										}
-									}
-								}
-							}
-						} else if (fileIsInExtraDIR((fn + "_256RP.png").c_str())) {
-							if (!listEntry.viewEnhanced) {
-								Common::String fileName = fn + "_256RP.png";
-								Common::SeekableReadStream *file = SearchMan.createReadStreamForMember(fileName);
-								if (!file) {
-									//debug("Enhanced Bitmap %s DOES NOT EXIST, yet would have been loaded.. 2", fileName.c_str());
-								} else {
-									//debug("Enhanced Bitmap %s EXISTS, and has been loaded..", fileName.c_str());
-									Graphics::Surface *viewpngtmp = loadCelPNGCLUTOverride(file);
-									listEntry.viewpng = viewpngtmp;
-									if (listEntry.viewpng) {
-										const byte *viewenhtmp = (const byte *)viewpngtmp->getPixels();
-										listEntry.viewenh = viewenhtmp;
-										if (listEntry.viewenh) {
-											listEntry.pixelsLength = listEntry.viewpng->w * listEntry.viewpng->h;
-											listEntry.viewEnhanced = true;
-											listEntry.enhancedIs256 = true;
-											std::pair<Graphics::Surface *, const byte *> tmp;
-											tmp.first = viewpngtmp;
-											tmp.second = viewenhtmp;
-											viewsMap.insert(std::pair<std::string, std::pair<Graphics::Surface *, const byte *> >((fn + "_256RP.png").c_str(), tmp));
-											//debug(fn.c_str());
-											//debug("LOADED FROM DISC");
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	    // Create rect according to coordinates and given cel
-	    view->getCelRectEnhanced(listEntry.viewpng, listEntry.viewEnhanced,loopNo, celNo, x, y, 0, celRect);
-	_paint16->drawCel(listEntry.viewpng, listEntry.viewenh, listEntry.pixelsLength, listEntry.viewEnhanced, listEntry.enhancedIs256, view, loopNo, celNo, 0, celRect, priority, 0);
+	// Create rect according to coordinates and given cel
+	view->getCelRect(loopNo, celNo, x, y, 0, celRect);
+	_paint16->drawCel(view, loopNo, celNo, celRect, priority, 0);
 
 	if (control != -1) {
 		celRect.top = CLIP<int16>(_ports->kernelPriorityToCoordinate(priority) - 1, celRect.top, celRect.bottom - 1);
@@ -1811,17 +679,9 @@ void GfxAnimate::kernelAnimate(reg_t listReference, bool cycle, int argc, reg_t 
 	}
 
 	Port *oldPort = _ports->setPort((Port *)_ports->_picWind);
-	if (g_sci->stereoscopic) {
-		if (!g_sci->stereoRightEye) {
-			makeSortedList(list);			
-		} else {
-			disposeLastCast();
-		}
-	} else {
-		disposeLastCast();
-		makeSortedList(list);
-	}
-	
+	disposeLastCast();
+
+	makeSortedList(list);
 	fill(old_picNotValid);
 
 	if (old_picNotValid) {
